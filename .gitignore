@@ -1,0 +1,22 @@
+# Rust
+target/
+
+# Foundry
+out/
+cache/
+broadcast/
+
+# SP1 build artifacts (regenerable; pinned release artifacts are archived explicitly, not committed ad hoc)
+**/proof-artifacts/
+
+# Environment / secrets
+.env
+.env.*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Node (tooling only, if ever)
+node_modules/
