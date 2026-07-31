@@ -26,6 +26,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: foundry-rs/foundry-toolchain@v1
+      # The I12 differential fuzz test shells out to this oracle via vm.ffi.
+      - run: cargo build -p blobsitter-reference --bin mmr_oracle
       - run: forge fmt --check
         working-directory: contracts
       - run: forge build
