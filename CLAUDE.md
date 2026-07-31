@@ -46,14 +46,20 @@ and bonded storage providers accountable via challenges and slashing.
   conformance suite (`reference/tests/vectors.rs`). Must pass before any commit.
 - `python3 scripts/gen_vectors.py` — regenerate `vectors/` (only after a deliberate
   normative-spec change; CI fails if committed vectors don't match the generator).
+- `cargo build -p blobsitter-reference --bin mmr_oracle && (cd contracts && forge test)` —
+  the contract suite (vector conformance, negatives, invariants). The oracle build comes
+  first: the I12 differential fuzz test calls it via `vm.ffi`.
 
 ## Layout
 
 - `spec/` — design spec (WHY) + normative spec (WHAT).
 - `vectors/` — golden test vectors (cross-component truth).
 - `scripts/gen_vectors.py` — vector generator (interim; Rust reference will take over).
-- `reference/` — Rust reference implementation of normative §1–10.
-- Planned: `contracts/` (Foundry), `circuits/` (SP1), `daemon/`, `carrier/`, `publisher/`.
+- `reference/` — Rust reference implementation of normative §1–10 + §11 EIP-712 digests;
+  `src/bin/mmr_oracle.rs` is the forge suite's ffi differential oracle.
+- `contracts/` — Foundry project: the instance template (publication core as of
+  milestone 1; challenges/custody/paymaster are later milestones) + mocks and tests.
+- Planned: `circuits/` (SP1), `daemon/`, `carrier/`, `publisher/`.
 
 ## Working rules
 
