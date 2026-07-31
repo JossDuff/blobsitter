@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # The committed vectors must be exactly what the generator produces — no hand edits,
+  # no stale files after a spec change.
+  vectors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/gen_vectors.py
+      - run: git diff --exit-code vectors/
+
+  # The reference implementation must agree with the committed vectors.
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace -- -D warnings
+        continue-on-error: true # advisory until a lint policy is decided

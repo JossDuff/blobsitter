@@ -40,6 +40,21 @@ and bonded storage providers accountable via challenges and slashing.
 - Circuits: SP1 zkVM — pin the exact version at contract freeze; PLONK wrap default.
 - Off-chain (daemon, carrier, publisher tooling, reference implementation): Rust.
 
+## Commands
+
+- `cargo test --workspace` — build + run all Rust tests, including the golden-vector
+  conformance suite (`reference/tests/vectors.rs`). Must pass before any commit.
+- `python3 scripts/gen_vectors.py` — regenerate `vectors/` (only after a deliberate
+  normative-spec change; CI fails if committed vectors don't match the generator).
+
+## Layout
+
+- `spec/` — design spec (WHY) + normative spec (WHAT).
+- `vectors/` — golden test vectors (cross-component truth).
+- `scripts/gen_vectors.py` — vector generator (interim; Rust reference will take over).
+- `reference/` — Rust reference implementation of normative §1–10.
+- Planned: `contracts/` (Foundry), `circuits/` (SP1), `daemon/`, `carrier/`, `publisher/`.
+
 ## Working rules
 
 - Golden vectors in `vectors/` are cross-component truth: contract, circuit, daemon, and

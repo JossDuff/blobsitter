@@ -1,0 +1,16 @@
+[package]
+name = "blobsitter-reference"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Reference implementation of the blobsitter normative spec (spec/normative.md §1-10)"
+
+[dependencies]
+# keccak-256; the same crate family SP1 patches for in-circuit acceleration,
+# so guest code can later share this exact dependency.
+tiny-keccak = { version = "2", features = ["keccak", "sha3"] }
+# only used to reduce the Fiat-Shamir hash into the BLS12-381 scalar field
+num-bigint = "0.4"
+
+[dev-dependencies]
+serde_json = "1"
