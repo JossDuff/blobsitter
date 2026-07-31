@@ -10,6 +10,7 @@ solc_version = "0.8.28"
 evm_version = "cancun"
 optimizer = true
 optimizer_runs = 10_000
+via_ir = true
 # vm.ffi: the I12 differential fuzz test calls the Rust reference oracle
 # (cargo build -p blobsitter-reference --bin mmr_oracle first).
 ffi = true
