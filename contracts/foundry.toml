@@ -1,0 +1,27 @@
+# Foundry configuration for the blobsitter instance template (spec/normative.md §11-§16).
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+# Pinned; the template is immutable post-deployment, so toolchain drift is a spec risk.
+solc_version = "0.8.28"
+# blobhash() and the point-evaluation precompile (0x0A) require Cancun.
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 10_000
+# vm.ffi: the I12 differential fuzz test calls the Rust reference oracle
+# (cargo build -p blobsitter-reference --bin mmr_oracle first).
+ffi = true
+# Golden vectors are read from the repo's vectors/ directory.
+fs_permissions = [{ access = "read", path = "../vectors" }]
+
+[profile.default.fuzz]
+runs = 256
+
+[profile.default.invariant]
+runs = 32
+depth = 12
+
+[fmt]
+line_length = 100
