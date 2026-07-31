@@ -1,0 +1,70 @@
+{
+  "_spec": "normative.md \u00a77.2",
+  "peaks_for_n13": [
+    "0x209cf4d9876b29f6259da08ae6f10553ed162dc172e4fbd7a2337e79a3886511",
+    "0x3c1f154c7fafc0eac99aff4c495cbcdda40c17c3cebd71e77d7e6a1d7e461187",
+    "0x978177c8db159cb1329e567b4447d9476dbd3735863c8f178e7c3c4028509408"
+  ],
+  "cases": [
+    {
+      "leafCount": 13,
+      "index": 0,
+      "chunk": "0x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e",
+      "peakIndex": 0,
+      "path": [
+        "0xb76aaac555d2226fe920e4338e8703c0570b477d96646d2d5b76b2b9a9e91ab7",
+        "0xde9128a841e1f28fbef3561e7db1a1f5207995c6a471560fa83f9689d783d05d",
+        "0xcbf0ce86193fe4094d0854d550a89ca3e0e68929757e349ce4406da41f279880"
+      ]
+    },
+    {
+      "leafCount": 13,
+      "index": 5,
+      "chunk": "0x9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9",
+      "peakIndex": 0,
+      "path": [
+        "0x6e897b38c193c6d5c319acc6a19f16ab2fed262d45bdb3de565f459cf8f14d0c",
+        "0x62c598e3c3505bebadee27ec6d7f3c122eee94348a3ea5943eb50c01578cd3cd",
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0"
+      ]
+    },
+    {
+      "leafCount": 13,
+      "index": 7,
+      "chunk": "0xd9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7",
+      "peakIndex": 0,
+      "path": [
+        "0xc4b0260d113dbf06f8a465bcb3e9e09d4532eb152e221a5ca89dbb678d18ab54",
+        "0x319aeda6b2c295fed3c8970e07be4508c1860b5e016eee01022c984ae3ef395e",
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0"
+      ]
+    },
+    {
+      "leafCount": 13,
+      "index": 8,
+      "chunk": "0xf8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f10111213141516",
+      "peakIndex": 1,
+      "path": [
+        "0x7776ead7b48aa3de89d5df251e47a2dcbd7cbea79530910b98d2b57d446d1669",
+        "0xaceefa3f761d72840ad832c725b9aee58de6531c082ed4ed8f6d63b9c2863d4d"
+      ]
+    },
+    {
+      "leafCount": 13,
+      "index": 11,
+      "chunk": "0x55565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70717273",
+      "peakIndex": 1,
+      "path": [
+        "0x5c7555626662a2ffdf0d1f9bd4b32573d27135f8da900008f6e11c9bdda10c8b",
+        "0xe97a2cb23db55906d1ecfed69ffa5efcd6c7ca8a51ec2c21db9124c56ba6d78f"
+      ]
+    },
+    {
+      "leafCount": 13,
+      "index": 12,
+      "chunk": "0x7475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192",
+      "peakIndex": 2,
+      "path": []
+    }
+  ]
+}

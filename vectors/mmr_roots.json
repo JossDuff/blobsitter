@@ -1,0 +1,142 @@
+{
+  "_spec": "normative.md \u00a75",
+  "chunkPattern": "chunk(i)[b]=(31*i+b)%256",
+  "cases": [
+    {
+      "leafCount": 0,
+      "peakHeights": [],
+      "peaks": [],
+      "root": "0xac7d142168b5cd31fbaae150cbc4f1f3031ef30554cb3e9b58fffe1f081cc819"
+    },
+    {
+      "leafCount": 1,
+      "peakHeights": [
+        0
+      ],
+      "peaks": [
+        "0x494fad95d8f97bf26572e69b4c6b584e9b25e5d556e46491a01b30d5f071229b"
+      ],
+      "root": "0xcfa54a46ea5fa953959f4c30e9f1d5b7b36a69cb4802840b324ba5ea0ac3323d"
+    },
+    {
+      "leafCount": 2,
+      "peakHeights": [
+        1
+      ],
+      "peaks": [
+        "0xd9e43c6ad840b40b166940ba8b21c9a4c4bbd1f340db487bdead9fd7d2dc82f9"
+      ],
+      "root": "0x4d00e1a71c7a073ec761664a83ee6ce36f11bec0772246e7028954f17f1d18a6"
+    },
+    {
+      "leafCount": 3,
+      "peakHeights": [
+        1,
+        0
+      ],
+      "peaks": [
+        "0xd9e43c6ad840b40b166940ba8b21c9a4c4bbd1f340db487bdead9fd7d2dc82f9",
+        "0x10f9eaebc5077282dd843ecf522a9af8123e1191aefe266b7be7519646728c45"
+      ],
+      "root": "0xda1aa9c9907b4549cebdd551b135ef62e636fac3a9feca506c9f231955ca9281"
+    },
+    {
+      "leafCount": 4,
+      "peakHeights": [
+        2
+      ],
+      "peaks": [
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0"
+      ],
+      "root": "0xc204b7118f11ed94e97b6ea6579983dd5abe0d5a3be1ef60abf8207fcf723d37"
+    },
+    {
+      "leafCount": 5,
+      "peakHeights": [
+        2,
+        0
+      ],
+      "peaks": [
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0",
+        "0x6e897b38c193c6d5c319acc6a19f16ab2fed262d45bdb3de565f459cf8f14d0c"
+      ],
+      "root": "0x21dd8f494e7d6d6fb56ad5b2b4c677676e5e9fa5429b51e8de04788e2a4409d5"
+    },
+    {
+      "leafCount": 6,
+      "peakHeights": [
+        2,
+        1
+      ],
+      "peaks": [
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0",
+        "0x319aeda6b2c295fed3c8970e07be4508c1860b5e016eee01022c984ae3ef395e"
+      ],
+      "root": "0xd87b2e7110db46dfaac48827b4ca1248ef6aa336e0bc89720d574f329dbb7c62"
+    },
+    {
+      "leafCount": 7,
+      "peakHeights": [
+        2,
+        1,
+        0
+      ],
+      "peaks": [
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0",
+        "0x319aeda6b2c295fed3c8970e07be4508c1860b5e016eee01022c984ae3ef395e",
+        "0xc4b0260d113dbf06f8a465bcb3e9e09d4532eb152e221a5ca89dbb678d18ab54"
+      ],
+      "root": "0xaec5c695d6c1afb50f6e913fac9673a37f59e6a517660ce9c93380414a899d28"
+    },
+    {
+      "leafCount": 8,
+      "peakHeights": [
+        3
+      ],
+      "peaks": [
+        "0x209cf4d9876b29f6259da08ae6f10553ed162dc172e4fbd7a2337e79a3886511"
+      ],
+      "root": "0x1173ede4cd1e49eb029532ebea2a559f7f2e8d8df0eeb6a34e83c2c25bc62b2f"
+    },
+    {
+      "leafCount": 13,
+      "peakHeights": [
+        3,
+        2,
+        0
+      ],
+      "peaks": [
+        "0x209cf4d9876b29f6259da08ae6f10553ed162dc172e4fbd7a2337e79a3886511",
+        "0x3c1f154c7fafc0eac99aff4c495cbcdda40c17c3cebd71e77d7e6a1d7e461187",
+        "0x978177c8db159cb1329e567b4447d9476dbd3735863c8f178e7c3c4028509408"
+      ],
+      "root": "0x0a2e24ea256849f1c677b4ec0a39fe78af39927dd6176c3807438ed184b7bab4"
+    },
+    {
+      "leafCount": 33,
+      "peakHeights": [
+        5,
+        0
+      ],
+      "peaks": [
+        "0x91d379bee9691fa458a3889462987c133df80ae179c49bc4890cce98ac35ed34",
+        "0x95ca077ecc271711cb331263af6aae4330074496b49db2c6cc00a44670a88d80"
+      ],
+      "root": "0x3840846cfaa3e1e2605378836abb8ba74391b05978023f68eb6222b9de80b3a6"
+    },
+    {
+      "leafCount": 100,
+      "peakHeights": [
+        6,
+        5,
+        2
+      ],
+      "peaks": [
+        "0x97bd0252904e28efbd807d2332fbd48530182f078ba8add89ecaa3532e2be7c1",
+        "0x88723894919954970c7ece24a19f739513b50786d53f7fa51d9c47b9065ed430",
+        "0x5629c2d657c9d87222acbe7dbda68bdb46bb105324cb07af9e2eb72a699f056c"
+      ],
+      "root": "0x51180107ceddebfc308b43788529c2ed1a7480c6f4aee58cacf2d68f6b7d7af2"
+    }
+  ]
+}

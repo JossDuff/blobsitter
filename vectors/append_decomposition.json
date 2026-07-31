@@ -1,0 +1,157 @@
+{
+  "_spec": "normative.md \u00a76",
+  "cases": [
+    {
+      "priorLeafCount": 0,
+      "updateChunks": 1,
+      "heights": [
+        0
+      ],
+      "newSubtreePeaks": [
+        "0x494fad95d8f97bf26572e69b4c6b584e9b25e5d556e46491a01b30d5f071229b"
+      ],
+      "resultPeaks": [
+        "0x494fad95d8f97bf26572e69b4c6b584e9b25e5d556e46491a01b30d5f071229b"
+      ],
+      "resultRoot": "0xcfa54a46ea5fa953959f4c30e9f1d5b7b36a69cb4802840b324ba5ea0ac3323d"
+    },
+    {
+      "priorLeafCount": 0,
+      "updateChunks": 5,
+      "heights": [
+        2,
+        0
+      ],
+      "newSubtreePeaks": [
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0",
+        "0x6e897b38c193c6d5c319acc6a19f16ab2fed262d45bdb3de565f459cf8f14d0c"
+      ],
+      "resultPeaks": [
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0",
+        "0x6e897b38c193c6d5c319acc6a19f16ab2fed262d45bdb3de565f459cf8f14d0c"
+      ],
+      "resultRoot": "0x21dd8f494e7d6d6fb56ad5b2b4c677676e5e9fa5429b51e8de04788e2a4409d5"
+    },
+    {
+      "priorLeafCount": 1,
+      "updateChunks": 3,
+      "heights": [
+        0,
+        1
+      ],
+      "newSubtreePeaks": [
+        "0xb76aaac555d2226fe920e4338e8703c0570b477d96646d2d5b76b2b9a9e91ab7",
+        "0xde9128a841e1f28fbef3561e7db1a1f5207995c6a471560fa83f9689d783d05d"
+      ],
+      "resultPeaks": [
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0"
+      ],
+      "resultRoot": "0xc204b7118f11ed94e97b6ea6579983dd5abe0d5a3be1ef60abf8207fcf723d37"
+    },
+    {
+      "priorLeafCount": 6,
+      "updateChunks": 3,
+      "heights": [
+        1,
+        0
+      ],
+      "newSubtreePeaks": [
+        "0x62c598e3c3505bebadee27ec6d7f3c122eee94348a3ea5943eb50c01578cd3cd",
+        "0x66f0546c7e799eb9a3d23182b4d3072e9ee20c8933a131e2cfddee9176a0246e"
+      ],
+      "resultPeaks": [
+        "0x209cf4d9876b29f6259da08ae6f10553ed162dc172e4fbd7a2337e79a3886511",
+        "0x66f0546c7e799eb9a3d23182b4d3072e9ee20c8933a131e2cfddee9176a0246e"
+      ],
+      "resultRoot": "0x8e610e76150edc417597fa7c65787dd2675bd413e33f8c1cd4cdaa7da699aa27"
+    },
+    {
+      "priorLeafCount": 5,
+      "updateChunks": 8,
+      "heights": [
+        0,
+        1,
+        2,
+        0
+      ],
+      "newSubtreePeaks": [
+        "0xaecb4b18a3a9d9db4a599a44b3642dda98bf796271dcfc2fa28dd083db5b8062",
+        "0x62c598e3c3505bebadee27ec6d7f3c122eee94348a3ea5943eb50c01578cd3cd",
+        "0x3c1f154c7fafc0eac99aff4c495cbcdda40c17c3cebd71e77d7e6a1d7e461187",
+        "0x978177c8db159cb1329e567b4447d9476dbd3735863c8f178e7c3c4028509408"
+      ],
+      "resultPeaks": [
+        "0x209cf4d9876b29f6259da08ae6f10553ed162dc172e4fbd7a2337e79a3886511",
+        "0x3c1f154c7fafc0eac99aff4c495cbcdda40c17c3cebd71e77d7e6a1d7e461187",
+        "0x978177c8db159cb1329e567b4447d9476dbd3735863c8f178e7c3c4028509408"
+      ],
+      "resultRoot": "0x0a2e24ea256849f1c677b4ec0a39fe78af39927dd6176c3807438ed184b7bab4"
+    },
+    {
+      "priorLeafCount": 13,
+      "updateChunks": 20,
+      "heights": [
+        0,
+        1,
+        4,
+        0
+      ],
+      "newSubtreePeaks": [
+        "0xe3b2c64163a80e9586823cc506e80205a941a88f2efbc9460be9764b450adb92",
+        "0xec745422f320c65d7c170806be57e5504fd51ab1e9c47bc5b2e0aca8e480c2de",
+        "0x5c94435e6c2c26bd9ec77a9533fc976e8f7c33376f0556d7ae497a232b1d4e5e",
+        "0x95ca077ecc271711cb331263af6aae4330074496b49db2c6cc00a44670a88d80"
+      ],
+      "resultPeaks": [
+        "0x91d379bee9691fa458a3889462987c133df80ae179c49bc4890cce98ac35ed34",
+        "0x95ca077ecc271711cb331263af6aae4330074496b49db2c6cc00a44670a88d80"
+      ],
+      "resultRoot": "0x3840846cfaa3e1e2605378836abb8ba74391b05978023f68eb6222b9de80b3a6"
+    },
+    {
+      "priorLeafCount": 0,
+      "updateChunks": 4096,
+      "heights": [
+        12
+      ],
+      "newSubtreePeaks": [
+        "0xeb9a42eda3e23e4121380a12e917b9bccb1533a4fb2cf7ca45fecb9be963d36d"
+      ],
+      "resultPeaks": [
+        "0xeb9a42eda3e23e4121380a12e917b9bccb1533a4fb2cf7ca45fecb9be963d36d"
+      ],
+      "resultRoot": "0xe634bfef255d236202a93350229e33b71f3d57480268d57c2b95062609a6224a"
+    },
+    {
+      "priorLeafCount": 4095,
+      "updateChunks": 2,
+      "heights": [
+        0,
+        0
+      ],
+      "newSubtreePeaks": [
+        "0x89b8b2d9a179741e820a33d1978c010810bf8b29a3aae8579f92df787d6de327",
+        "0x494fad95d8f97bf26572e69b4c6b584e9b25e5d556e46491a01b30d5f071229b"
+      ],
+      "resultPeaks": [
+        "0xeb9a42eda3e23e4121380a12e917b9bccb1533a4fb2cf7ca45fecb9be963d36d",
+        "0x494fad95d8f97bf26572e69b4c6b584e9b25e5d556e46491a01b30d5f071229b"
+      ],
+      "resultRoot": "0x68b99bfe67e68b77c2e32dc4f8ef2d3f852e7afda357470942f8659bbae8b127"
+    },
+    {
+      "priorLeafCount": 4096,
+      "updateChunks": 4096,
+      "heights": [
+        12
+      ],
+      "newSubtreePeaks": [
+        "0xeb9a42eda3e23e4121380a12e917b9bccb1533a4fb2cf7ca45fecb9be963d36d"
+      ],
+      "resultPeaks": [
+        "0xe432cee1c4ccda019d666c1722f6b3ddd2c25fdfe7d3897211cead34c6df079c"
+      ],
+      "resultRoot": "0xdc3ed8a4284556c8d3e9316cb818b6c56c7ae7f281fb9283e8fed1f898978a1a"
+    }
+  ]
+}

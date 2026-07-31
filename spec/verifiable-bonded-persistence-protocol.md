@@ -16,6 +16,10 @@ attestation. The protocol has no knowledge of what any dataset means.
 > entire optimistic apparatus — dispute window, publisher fraud bond, root stacking and
 > truncation, watcher role — with a proof of equivalence verified at declaration time.
 
+> **Normative companion.** Exact byte-level definitions — hashing rules, encodings,
+> algorithms, test vectors — live in `normative.md`. This document is the rationale; where
+> the two disagree, stop and resolve rather than picking one.
+
 **Deployment model:** the protocol is a single canonical, **immutable contract template**.
 Each publisher **deploys their own instance** — no central registry, no registration step. A
 dataset's identity is its contract address (the ERC-20 pattern: every instance is its own
@@ -236,8 +240,10 @@ The statement binds the two commitment schemes — the blob's KZG polynomial com
 MMR's keccak hash tree — over the same bytes, via a Fiat–Shamir random-evaluation argument:
 
 - The contract derives the evaluation point
-  `z = keccak(blobVersionedHashes ‖ priorPeaks ‖ newSubtreePeaks ‖ newLeafCount) mod r`.
-  Neither side of the equivalence can be chosen after `z` is known.
+  `z = keccak(tag ‖ instanceAddress ‖ blobVersionedHashes ‖ priorPeaks ‖ newSubtreePeaks ‖
+  priorLeafCount ‖ newLeafCount) mod r` (exact byte layout: `normative.md` §8; the instance
+  address makes proofs instance-bound). Neither side of the equivalence can be chosen after
+  `z` is known.
 - **Blob side (native):** for each blob j, the point-evaluation precompile verifies
   `p_j(z) = y_j` against the blob's versioned hash, using the KZG opening proof supplied in
   calldata (50k gas per blob).
@@ -379,16 +385,19 @@ Every bonded provider must, once per **custody period (30 days)**, prove possess
 1. **`beginProof()`** — the provider's first call in a period snapshots
    `(seed = block.prevrandao, root, leafCount)` (~45k gas). **One commit per period; the first
    is binding.** The seed cannot be re-rolled.
-2. Off-chain, the provider derives indices `idx_j = H(seed ‖ providerAddress ‖ j) mod
-   leafCount`, reads those chunks from disk, regenerates their Merkle paths (top levels cached,
+2. Off-chain, the provider derives indices `idx_j = H(tag ‖ instance ‖ seed ‖ providerId ‖
+   j) mod leafCount` (exact byte layout: `normative.md` §9), reads those chunks from disk,
+   regenerates their Merkle paths (top levels cached,
    ~2.5 MB; bottom levels recomputed from raw data — an incidental check that the disk still
    reads), and proves in-circuit: *"I know chunks and paths at exactly these indices verifying
-   against this root."* Public inputs: `(root, leafCount, seed, providerAddress, k)`. ~475k
+   against this root."* Public inputs: `(root, leafCount, seed, providerId, k)`. ~475k
    in-circuit keccaks ≈ under an hour on one consumer GPU.
 3. **`submitProof(π)`** — verified on-chain (~330k gas ≈ $10) before the period deadline.
 
-The provider-address salt in the index derivation is load-bearing: without it, one proof per
-period could be shared by every provider on the instance.
+The provider-identity and instance-address salts in the index derivation are load-bearing:
+without them, one proof per period could be shared by every provider on the instance — or
+across instances of the same dataset that pin the same root and seed (prevrandao is
+chain-global, so two instances' periods can share a seed).
 
 **Escape hatch (SNARK-free forever):** a provider may instead satisfy any period by revealing
 the first `maxSample` (32) seed-derived chunks raw on-chain with inclusion proofs — the
