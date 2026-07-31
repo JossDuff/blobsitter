@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
+import {BlobsitterInstance} from "src/BlobsitterInstance.sol";
 import {MMR} from "src/libraries/MMR.sol";
 import {TestVec} from "test/helpers/TestVec.sol";
 
@@ -103,6 +104,32 @@ contract VectorsTest is Test {
                 assertEq(result, leafwise, "batch != leaf-by-leaf");
             }
         }
+    }
+
+    /// §8: the Fiat–Shamir evaluation point. z is instance-bound, so the instance is
+    /// deployed at the vector's dummy address.
+    function test_vectors_fsZ() public {
+        string memory json = _load("fs_z.json");
+        address at = json.readAddress(".instance");
+        BlobsitterInstance.Params memory p;
+        p.publisher = address(0xbeef); // z touches no parameter
+        deployCodeTo("BlobsitterInstance.sol:BlobsitterInstance", abi.encode(p), at);
+
+        uint64 n0 = uint64(json.readUint(".priorLeafCount"));
+        bytes32[] memory priorPeaks = json.readBytes32Array(".priorPeaks");
+        // The vector's inputs must themselves be coherent with the pattern build.
+        (bytes32[] memory built,) = TestVec.buildPeaks(n0);
+        assertEq(built, priorPeaks, "prior peaks");
+
+        bytes32 z = BlobsitterInstance(at)
+            .fiatShamirZ(
+                json.readBytes32Array(".blobVersionedHashes"),
+                priorPeaks,
+                json.readBytes32Array(".newSubtreePeaks"),
+                n0,
+                uint64(json.readUint(".newLeafCount"))
+            );
+        assertEq(uint256(z), json.readUint(".z"), "z");
     }
 
     /// Peaks at leaf count n via a single batched update from the empty MMR.

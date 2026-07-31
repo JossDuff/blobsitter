@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {MMR} from "./libraries/MMR.sol";
+import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 
 /// Minimal ERC-1271 surface the instance needs (§11.3).
 interface IERC1271 {
@@ -89,6 +90,21 @@ contract BlobsitterInstance {
     uint256 public constant RESPONSE_GAS_PER_CHUNK = 38_680;
     uint256 public constant RESPONSE_BASE_GAS = 21_000;
     uint256 public constant BOND_MULTIPLIER = 3;
+
+    /// The canonical SP1VerifierGateway deployment. PROVISIONAL: pinned for real —
+    /// together with the exact SP1 release — at contract freeze (§12.1). Tests etch the
+    /// interface-exact mock at this address.
+    address public constant SP1_VERIFIER = 0x397A5f7f3dBd538f23DE225B51f532c34448dA9B;
+    /// PLACEHOLDER vkeys: the real values are the SP1 program verifying keys, computed
+    /// when the circuits are built and frozen as template constants (§12.1, §14).
+    bytes32 public constant EQUIVALENCE_VKEY = keccak256("blobsitter.equivalence-vkey.placeholder");
+    bytes32 public constant CUSTODY_VKEY = keccak256("blobsitter.custody-vkey.placeholder");
+
+    /// §1: r, the BLS12-381 scalar field modulus (the EIP-4844 blob field).
+    uint256 private constant BLS_MODULUS =
+        52435875175126190479447740508185965837690552500527637822603658699938581184513;
+    /// EIP-4844 point-evaluation precompile.
+    address private constant POINT_EVALUATION = address(0x0A);
 
     // ---------------------------------------------------------------------------
     // §12.1 constructor parameters — fixed forever at deployment. Providers MUST
@@ -222,6 +238,109 @@ contract BlobsitterInstance {
         return _digest(keccak256(abi.encode(SET_SUCCESSOR_TYPEHASH, nonce, deadline, target)));
     }
 
+    /// §8: the Fiat–Shamir evaluation point z, reduced into the BLS12-381 scalar field.
+    /// The instance address makes z — and hence proofs — instance-bound; every committed
+    /// quantity the equivalence statement touches appears in the preimage. Public so
+    /// carriers and the publisher toolchain can precompute openings.
+    function fiatShamirZ(
+        bytes32[] memory blobVersionedHashes,
+        bytes32[] memory priorPeaks,
+        bytes32[] memory newSubtreePeaks,
+        uint64 priorLeafCount,
+        uint64 newLeafCount
+    ) public view returns (bytes32) {
+        bytes32 h = keccak256(
+            abi.encodePacked(
+                bytes1(0x03),
+                address(this),
+                blobVersionedHashes,
+                priorPeaks,
+                newSubtreePeaks,
+                priorLeafCount,
+                newLeafCount
+            )
+        );
+        return bytes32(uint256(h) % BLS_MODULUS);
+    }
+
+    // ---------------------------------------------------------------------------
+    // §12.3 publication: declareFor.
+    // ---------------------------------------------------------------------------
+
+    struct BlobOpening {
+        bytes32 y;
+        bytes commitment; // 48 bytes (KZG commitment)
+        bytes kzgProof; // 48 bytes
+    }
+
+    function declareFor(
+        Declaration calldata d,
+        bytes calldata publisherSig,
+        BlobOpening[] calldata openings,
+        bytes calldata equivalenceProof
+    ) external {
+        // Check 1: intent validity.
+        if (block.timestamp > d.deadline) revert IntentExpired(d.deadline);
+        if (d.nonce != declarationNonce) revert WrongNonce(declarationNonce);
+        if (d.designatedCarrier != address(0) && d.designatedCarrier != msg.sender) {
+            revert NotDesignatedCarrier(d.designatedCarrier);
+        }
+        _requireValidSignature(declarationDigest(d), publisherSig);
+
+        // Check 2: shape — the transaction carries exactly the signed blobs, and the
+        // subtree peak count matches the (n, m)-determined decomposition.
+        uint64 n0 = leafCount;
+        if (d.newLeafCount <= n0) revert EmptyUpdate();
+        uint64 m = d.newLeafCount - n0;
+        uint256 blobCount = (uint256(m) + 4095) / 4096; // B = ceil(m / 4096) (§4)
+        if (d.blobVersionedHashes.length != blobCount || openings.length != blobCount) {
+            revert BlobCountMismatch(blobCount);
+        }
+        for (uint256 j = 0; j < blobCount; ++j) {
+            if (blobhash(j) != d.blobVersionedHashes[j]) revert BlobHashMismatch(j);
+        }
+        if (blobhash(blobCount) != bytes32(0)) revert UnexpectedExtraBlob();
+        uint8[] memory heights = MMR.decompose(n0, m);
+        if (d.newSubtreePeaks.length != heights.length) {
+            revert SubtreeCountMismatch(heights.length);
+        }
+
+        // Check 3: every blob opens to its claimed value at the Fiat–Shamir point.
+        bytes32[] memory priorPeaks = peaks;
+        bytes32 z =
+            fiatShamirZ(d.blobVersionedHashes, priorPeaks, d.newSubtreePeaks, n0, d.newLeafCount);
+        for (uint256 j = 0; j < blobCount; ++j) {
+            _verifyOpening(d.blobVersionedHashes[j], z, openings[j], j);
+        }
+
+        // Check 4: the equivalence proof (blob bytes ⇔ submitted subtree roots).
+        try ISP1Verifier(SP1_VERIFIER)
+            .verifyProof(EQUIVALENCE_VKEY, _equivalencePublicValues(), equivalenceProof) {}
+        catch {
+            revert InvalidEquivalenceProof();
+        }
+
+        // Step 5: effects. The recovery log is the Declared event itself — the
+        // versioned-hash history is event-only, never contract state.
+        (bytes32[] memory newPeaks, uint64 n1) =
+            MMR.applyUpdate(priorPeaks, n0, d.newSubtreePeaks, heights);
+        peaks = newPeaks;
+        leafCount = n1; // == d.newLeafCount by construction
+        declarationNonce = d.nonce + 1;
+        if (d.appPointer != bytes32(0)) appPointer = d.appPointer;
+        // §12.7: advance the activity checkpoint if due.
+        if (n1 - activityCheckpointLeafCount >= dormancyMinChunks) {
+            activityCheckpointTime = uint64(block.timestamp);
+            activityCheckpointLeafCount = n1;
+        }
+        emit Declared(
+            d.nonce, n1, d.blobVersionedHashes, d.newSubtreePeaks, d.appPointer, msg.sender
+        );
+
+        // Step 6: carrier reimbursement — after all state changes.
+        _reimburse(msg.sender, blobCount, true);
+    }
+
     // ---------------------------------------------------------------------------
     // §12.3 publication: setAppPointer / setSuccessor. Same pattern each: deadline,
     // own nonce, ERC-1271, effect, event, paymaster-reimbursed.
@@ -275,6 +394,28 @@ contract BlobsitterInstance {
         if (!ok || ret.length < 32 || abi.decode(ret, (bytes32)) != bytes32(ERC1271_MAGIC)) {
             revert BadSignature();
         }
+    }
+
+    /// §12.3 check 3: the EIP-4844 point-evaluation precompile with input
+    /// `vh ‖ z ‖ y ‖ commitment ‖ kzgProof` (192 bytes). A wrong-length commitment or
+    /// proof simply yields a non-192-byte input, which the precompile rejects.
+    function _verifyOpening(bytes32 vh, bytes32 z, BlobOpening calldata o, uint256 blobIndex)
+        private
+        view
+    {
+        (bool ok,) =
+            POINT_EVALUATION.staticcall(abi.encodePacked(vh, z, o.y, o.commitment, o.kzgProof));
+        if (!ok) revert PointEvaluationFailed(blobIndex);
+    }
+
+    /// §14 (circuit statements and publicValues byte layouts) is RESERVED and unwritten,
+    /// and inventing an encoding is forbidden — a silent guess becomes permanent. Until
+    /// §14 lands, the instance passes empty publicValues and the mock verifier validates
+    /// only (vkey, proof).
+    /// TODO(§14): encode the equivalence statement's public values exactly as specified.
+    /// This function body is the only place that changes; no call site moves.
+    function _equivalencePublicValues() private pure returns (bytes memory) {
+        return "";
     }
 
     /// §12.3 step 6 / §15 carrier reimbursement hook. Milestone 4 deploys the paymaster
