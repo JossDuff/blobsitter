@@ -1,4 +1,4 @@
-//! Reference implementation of `spec/normative.md` §1–10.
+//! Reference implementation of `spec/normative.md` §1–10 and the §11 EIP-712 digests.
 //!
 //! This crate is the authoritative executable form of the normative spec: every public
 //! function cites the section it implements, and the test suite checks the crate against
@@ -7,6 +7,8 @@
 
 use num_bigint::BigUint;
 use tiny_keccak::{Hasher, Keccak};
+
+pub mod eip712;
 
 /// Domain-separation tags (normative §2). Every keccak invocation the protocol defines
 /// is prefixed with exactly one of these.

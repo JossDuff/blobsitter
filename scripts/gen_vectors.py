@@ -503,4 +503,112 @@ emit("custody_indices.json", {
     "indices_j0_to_j15": idxs,
 })
 
+# --- eip712.json -------------------------------------------------------------
+# EIP-712 hashing (spec section 11): the three exact typehash strings, the domain
+# separator for a fixed dummy chain id + instance address, and struct-hash/digest pairs
+# for sample instances of every struct. The contract, the Rust reference, and the
+# publisher toolchain must all reproduce these digests bit-for-bit; a disagreement here
+# means signatures made by one component would be rejected by another.
+#
+# The typehash strings are single-line with no whitespace (the spec's section 11.2 code
+# block wraps them for display only). The dummy domain uses chainId 31337 (Foundry's
+# default, so forge tests can reproduce the separator on an un-forked test EVM) and the
+# same made-up instance address as fs_z.json.
+
+EIP712_DOMAIN_TYPE = b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+DECLARATION_TYPE = (b"Declaration(uint64 nonce,uint64 deadline,bytes32[] blobVersionedHashes,"
+                    b"bytes32[] newSubtreePeaks,uint64 newLeafCount,address designatedCarrier,"
+                    b"bytes32 appPointer)")
+SET_APP_POINTER_TYPE = b"SetAppPointer(uint64 nonce,uint64 deadline,bytes32 appPointer)"
+SET_SUCCESSOR_TYPE = b"SetSuccessor(uint64 nonce,uint64 deadline,address successor)"
+
+
+def u256(x):
+    """A uint (or bool) as a 32-byte big-endian word -- EIP-712 encodes every atomic
+    value as one word."""
+    return x.to_bytes(32, "big")
+
+
+def addr32(a):
+    """A 20-byte address left-padded to the 32-byte word EIP-712 uses."""
+    return b"\x00" * 12 + a
+
+
+CHAIN_ID = 31337
+domain_separator = keccak256(
+    keccak256(EIP712_DOMAIN_TYPE) + keccak256(b"blobsitter") + keccak256(b"1")
+    + u256(CHAIN_ID) + addr32(instance))
+
+
+def eip712_digest(struct_hash):
+    return keccak256(b"\x19\x01" + domain_separator + struct_hash)
+
+
+def declaration_hash(nonce, deadline, vhs, subtree_peaks, new_leaf_count, carrier, app_pointer):
+    # Array fields are encoded per EIP-712: keccak of the concatenated 32-byte elements.
+    return keccak256(
+        keccak256(DECLARATION_TYPE) + u256(nonce) + u256(deadline)
+        + keccak256(b"".join(vhs)) + keccak256(b"".join(subtree_peaks))
+        + u256(new_leaf_count) + addr32(carrier) + app_pointer)
+
+
+# Case 1 reuses the fs_z.json declaration (same instance, vh, subtree peaks, leaf counts)
+# so the two files describe one coherent declaration. Zero designatedCarrier ("anyone may
+# carry") and zero appPointer ("no update") cover the defaults.
+decl_cases = []
+for (nonce, deadline, vhs, peaks_, nlc, carrier, app) in [
+    (0, 1_700_000_000, vh, subtrees, n1, b"\x00" * 20, b"\x00" * 32),
+    # Case 2: multi-element arrays (array hashing is the easiest thing to get wrong),
+    # nonzero carrier and appPointer. Values are arbitrary-but-fixed; this file tests
+    # hashing, not protocol validity.
+    (7, 2_000_000_000,
+     [b"\x01" + keccak256(b"vector blob A")[1:], b"\x01" + keccak256(b"vector blob B")[1:]],
+     [keccak256(b"peak " + bytes([i])) for i in range(3)],
+     8192, keccak256(b"carrier")[12:], keccak256(b"app pointer")),
+]:
+    sh = declaration_hash(nonce, deadline, vhs, peaks_, nlc, carrier, app)
+    decl_cases.append({
+        "nonce": nonce,
+        "deadline": deadline,
+        "blobVersionedHashes": [hx(v) for v in vhs],
+        "newSubtreePeaks": [hx(p) for p in peaks_],
+        "newLeafCount": nlc,
+        "designatedCarrier": hx(carrier),
+        "appPointer": hx(app),
+        "structHash": hx(sh),
+        "digest": hx(eip712_digest(sh)),
+    })
+
+sap = (3, 1_700_000_000, keccak256(b"standalone app pointer"))
+sap_hash = keccak256(keccak256(SET_APP_POINTER_TYPE) + u256(sap[0]) + u256(sap[1]) + sap[2])
+suc = (0, 1_700_000_000, keccak256(b"successor")[12:])
+suc_hash = keccak256(keccak256(SET_SUCCESSOR_TYPE) + u256(suc[0]) + u256(suc[1]) + addr32(suc[2]))
+
+emit("eip712.json", {
+    "_spec": "normative.md §11",
+    "domain": {
+        "typehashString": EIP712_DOMAIN_TYPE.decode(),
+        "typehash": hx(keccak256(EIP712_DOMAIN_TYPE)),
+        "name": "blobsitter",
+        "version": "1",
+        "chainId": CHAIN_ID,
+        "verifyingContract": hx(instance),
+        "separator": hx(domain_separator),
+    },
+    "typehashes": {
+        "declaration": {"string": DECLARATION_TYPE.decode(), "hash": hx(keccak256(DECLARATION_TYPE))},
+        "setAppPointer": {"string": SET_APP_POINTER_TYPE.decode(), "hash": hx(keccak256(SET_APP_POINTER_TYPE))},
+        "setSuccessor": {"string": SET_SUCCESSOR_TYPE.decode(), "hash": hx(keccak256(SET_SUCCESSOR_TYPE))},
+    },
+    "declarations": decl_cases,
+    "setAppPointer": {
+        "nonce": sap[0], "deadline": sap[1], "appPointer": hx(sap[2]),
+        "structHash": hx(sap_hash), "digest": hx(eip712_digest(sap_hash)),
+    },
+    "setSuccessor": {
+        "nonce": suc[0], "deadline": suc[1], "successor": hx(suc[2]),
+        "structHash": hx(suc_hash), "digest": hx(eip712_digest(suc_hash)),
+    },
+})
+
 print("all internal assertions passed")
