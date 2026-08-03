@@ -1,0 +1,76 @@
+{
+  "_spec": "normative.md \u00a711",
+  "domain": {
+    "typehashString": "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+    "typehash": "0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f",
+    "name": "blobsitter",
+    "version": "1",
+    "chainId": 31337,
+    "verifyingContract": "0x00112233445566778899aabbccddeeff00112233",
+    "separator": "0xf3cc2cf6a0fbe2471c88ede54811bb77ebfb99fd2764f57e44e6eb8c1dce845a"
+  },
+  "typehashes": {
+    "declaration": {
+      "string": "Declaration(uint64 nonce,uint64 deadline,bytes32[] blobVersionedHashes,bytes32[] newSubtreePeaks,uint64 newLeafCount,address designatedCarrier,bytes32 appPointer)",
+      "hash": "0x0b9549d73687cc5f34893a3b0fd1c2f8ba042eee17e8e7b743da160074ff389c"
+    },
+    "setAppPointer": {
+      "string": "SetAppPointer(uint64 nonce,uint64 deadline,bytes32 appPointer)",
+      "hash": "0x6fa8cf0707c2cf971e3f4919dd63f8db7190fb4dad367d6ddf9276439c2a694b"
+    },
+    "setSuccessor": {
+      "string": "SetSuccessor(uint64 nonce,uint64 deadline,address successor)",
+      "hash": "0x4bbe5cbba5330fa6dba2508cb8d9084d84b335936bcd34e71c384c35bf02b42d"
+    }
+  },
+  "declarations": [
+    {
+      "nonce": 0,
+      "deadline": 1700000000,
+      "blobVersionedHashes": [
+        "0x01a7dbf45031fb57d18f8db06721a8d92d3203b338e0d65042ab9526287cf7a6"
+      ],
+      "newSubtreePeaks": [
+        "0xaecb4b18a3a9d9db4a599a44b3642dda98bf796271dcfc2fa28dd083db5b8062",
+        "0x62c598e3c3505bebadee27ec6d7f3c122eee94348a3ea5943eb50c01578cd3cd"
+      ],
+      "newLeafCount": 8,
+      "designatedCarrier": "0x0000000000000000000000000000000000000000",
+      "appPointer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "structHash": "0x148d052045095251ac89f614d84d661b85d37067b20802d59fdbc828dfd57153",
+      "digest": "0xe9b7ead306e02a86437a5ab632d8b321ef3368f45220e9d15aaac1b57cd175b9"
+    },
+    {
+      "nonce": 7,
+      "deadline": 2000000000,
+      "blobVersionedHashes": [
+        "0x01f82bee2c0e00103ca680d84cd71b02fe62680a15adaf741b06e549767907e3",
+        "0x01990a6f7901cfabf032500f77acfdadd36d128e1d0617f6f57a31f6b51622eb"
+      ],
+      "newSubtreePeaks": [
+        "0x1ba683183c85c270fee75c714439ee75ccec5b4077150ba0dc55ffd8713be91a",
+        "0xcf60f5e469e5686cdefa81a12e208775c8fc7d37a7d5891f461f237b9b0e3dd5",
+        "0x6d8d7fc11deb33fcd1546f571dcd0238a8a71ecebdec3ba3f662aeb7a8e4cf83"
+      ],
+      "newLeafCount": 8192,
+      "designatedCarrier": "0x2ed980c9779df653f33021d3dddbbb761a64ac3b",
+      "appPointer": "0xcdda0910091f61d928d0e734f091d1571e831a0cbc1817fceb0c9f137710d362",
+      "structHash": "0x5ce46927b1a706f662f9bdfaf1d02a96f115c5f581d312f259294a03f11df2c3",
+      "digest": "0x9c15cb80b4d181be8431b759ea810206104f9be732743db718e69dbbb3d035f4"
+    }
+  ],
+  "setAppPointer": {
+    "nonce": 3,
+    "deadline": 1700000000,
+    "appPointer": "0x6508c3fbab276b2efc09fd7e005a26bdc52c065776adb7e368f175ceb68e0dde",
+    "structHash": "0xf27b8a99c2fd5b401c1948c679c1f714c9ae3695ee75c3ec17dfd8265d0455f9",
+    "digest": "0xe0742aa425fed7a612445de424871ba348067ae0e9c205f8ef4215fa9e29f562"
+  },
+  "setSuccessor": {
+    "nonce": 0,
+    "deadline": 1700000000,
+    "successor": "0xe063e431b62817e94c970c752bb39b0c8cd9727a",
+    "structHash": "0x3569f28bfc96861fdf7169295dc29a98f49c0e9dd5b1a3db6cffcc900b8c495b",
+    "digest": "0xaa41cc4f68154183839b57350618a74596cfac3c525ee9f61910bdbed104f302"
+  }
+}

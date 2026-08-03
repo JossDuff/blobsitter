@@ -14,6 +14,31 @@ jobs:
       - run: python3 scripts/gen_vectors.py
       - run: git diff --exit-code vectors/
 
+  # The contracts must build, pass the full forge suite (vector conformance, negative
+  # tests, invariants incl. the ffi differential against the Rust reference), and be
+  # forge-fmt clean.
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: foundry-rs/foundry-toolchain@v1
+      # The I12 differential fuzz test shells out to this oracle via vm.ffi.
+      - run: cargo build -p blobsitter-reference --bin mmr_oracle
+      - run: forge fmt --check
+        working-directory: contracts
+      - run: forge build
+        working-directory: contracts
+      - run: forge test -vv
+        working-directory: contracts
+      # Informational for now; a coverage gate threshold is a pre-audit decision.
+      - run: forge coverage --report summary --ir-minimum
+        working-directory: contracts
+        continue-on-error: true
+
   # The reference implementation must agree with the committed vectors.
   rust:
     runs-on: ubuntu-latest

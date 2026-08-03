@@ -530,7 +530,8 @@ CURRENT / STALE / LAPSE_ELIGIBLE / LAPSABLE from the formulas in §13.3; plus
 
 ### 12.7 Paymaster & dormancy hooks (summary; accounting details in §15)
 
-- The instance's activity checkpoint `(t₀, leafCount₀)` advances to
+- The instance's activity checkpoint `(t₀, leafCount₀)` initializes to
+  `(deployTime, 0)` in the constructor (the instance deploys empty) and advances to
   `(now, leafCount)` whenever a declaration brings `leafCount − leafCount₀ ≥
   dormancyMinChunks`. Funder reclaim is open while `now − t₀ > dormancyWindow`.
 - Slash remainders are sent to the paymaster but are NOT recorded as reclaimable
@@ -556,8 +557,11 @@ Lapsed(providerId, executor)             Announced(url) / Retracted()
 
 ## 13. State machines
 
-Boundary convention, used everywhere: an action window is **open while `now < deadline`**
-and its consequence becomes **available at `now ≥ deadline`**. No window is both.
+Boundary convention for **protocol windows** (challenge response, unbonding, custody
+periods, lapse grace): an action window is **open while `now < deadline`** and its
+consequence becomes **available at `now ≥ deadline`**. No window is both. Intent deadlines
+(§11.2) are the one deliberate exception: a signed intent is submittable while
+`now <= deadline` (§12.3 check 1, §16 `IntentExpired`).
 
 ### 13.1 Provider lifecycle
 

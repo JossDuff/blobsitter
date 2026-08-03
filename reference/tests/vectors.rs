@@ -3,7 +3,7 @@
 //! about the normative spec — investigate which one is wrong; never "fix" a vector.
 
 use blobsitter_reference::{
-    custody_index, decompose, fs_z, fs_z_preimage, keccak256, leaf, peak_heights, root,
+    custody_index, decompose, eip712, fs_z, fs_z_preimage, keccak256, leaf, peak_heights, root,
     testvec, verify, Chunk, Hash,
 };
 use serde_json::Value;
@@ -174,6 +174,79 @@ fn fs_z_vector() {
     )
     .unwrap();
     assert_eq!(num_bigint::BigUint::from_bytes_be(&z), z_expected);
+}
+
+#[test]
+fn eip712_vectors() {
+    let v = load("eip712.json");
+
+    // Typehash strings must match the file exactly, and their keccaks the recorded hashes
+    // — a whitespace slip in any component would silently change every digest.
+    for (s, key) in [
+        (eip712::EIP712_DOMAIN_TYPE, &v["domain"]["typehashString"]),
+        (eip712::DECLARATION_TYPE, &v["typehashes"]["declaration"]["string"]),
+        (eip712::SET_APP_POINTER_TYPE, &v["typehashes"]["setAppPointer"]["string"]),
+        (eip712::SET_SUCCESSOR_TYPE, &v["typehashes"]["setSuccessor"]["string"]),
+    ] {
+        assert_eq!(s, key.as_str().unwrap(), "typehash string");
+    }
+    assert_eq!(
+        hex_of(&keccak256(eip712::DECLARATION_TYPE.as_bytes())),
+        v["typehashes"]["declaration"]["hash"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex_of(&keccak256(eip712::SET_APP_POINTER_TYPE.as_bytes())),
+        v["typehashes"]["setAppPointer"]["hash"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex_of(&keccak256(eip712::SET_SUCCESSOR_TYPE.as_bytes())),
+        v["typehashes"]["setSuccessor"]["hash"].as_str().unwrap()
+    );
+
+    let d = &v["domain"];
+    assert_eq!(d["name"].as_str().unwrap(), eip712::DOMAIN_NAME);
+    assert_eq!(d["version"].as_str().unwrap(), eip712::DOMAIN_VERSION);
+    let chain_id = d["chainId"].as_u64().unwrap();
+    let instance: [u8; 20] = from_hex(d["verifyingContract"].as_str().unwrap()).try_into().unwrap();
+    let sep = eip712::domain_separator(chain_id, &instance);
+    assert_eq!(hex_of(&sep), d["separator"].as_str().unwrap(), "domain separator");
+
+    let addr20 = |val: &Value| -> [u8; 20] { from_hex(val.as_str().unwrap()).try_into().unwrap() };
+
+    for case in v["declarations"].as_array().unwrap() {
+        let decl = eip712::Declaration {
+            nonce: case["nonce"].as_u64().unwrap(),
+            deadline: case["deadline"].as_u64().unwrap(),
+            blob_versioned_hashes: hashes(&case["blobVersionedHashes"]),
+            new_subtree_peaks: hashes(&case["newSubtreePeaks"]),
+            new_leaf_count: case["newLeafCount"].as_u64().unwrap(),
+            designated_carrier: addr20(&case["designatedCarrier"]),
+            app_pointer: hash(&case["appPointer"]),
+        };
+        let sh = decl.struct_hash();
+        assert_eq!(sh, hash(&case["structHash"]), "declaration struct hash");
+        assert_eq!(eip712::digest(&sep, &sh), hash(&case["digest"]), "declaration digest");
+    }
+
+    let case = &v["setAppPointer"];
+    let sh = eip712::SetAppPointer {
+        nonce: case["nonce"].as_u64().unwrap(),
+        deadline: case["deadline"].as_u64().unwrap(),
+        app_pointer: hash(&case["appPointer"]),
+    }
+    .struct_hash();
+    assert_eq!(sh, hash(&case["structHash"]), "setAppPointer struct hash");
+    assert_eq!(eip712::digest(&sep, &sh), hash(&case["digest"]), "setAppPointer digest");
+
+    let case = &v["setSuccessor"];
+    let sh = eip712::SetSuccessor {
+        nonce: case["nonce"].as_u64().unwrap(),
+        deadline: case["deadline"].as_u64().unwrap(),
+        successor: addr20(&case["successor"]),
+    }
+    .struct_hash();
+    assert_eq!(sh, hash(&case["structHash"]), "setSuccessor struct hash");
+    assert_eq!(eip712::digest(&sep, &sh), hash(&case["digest"]), "setSuccessor digest");
 }
 
 #[test]
