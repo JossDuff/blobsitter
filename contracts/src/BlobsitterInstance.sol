@@ -41,6 +41,13 @@ contract BlobsitterInstance {
     error SuccessorAlreadySet();
     error NothingClaimable();
     error PayoutFailed();
+    error WrongStakeAmount(uint256 expected);
+    error UnknownProvider(uint64 providerId);
+    error NotOperator(uint64 providerId);
+    error NotActive(uint64 providerId);
+    error NotUnbonding(uint64 providerId);
+    error UnbondingDelayActive(uint64 until);
+    error OpenChallengesRemain(uint32 count);
 
     // ---------------------------------------------------------------------------
     // §12.8 events (publication subset) — the daemon's contract surface.
@@ -57,6 +64,11 @@ contract BlobsitterInstance {
     event SuccessorSet(address target);
     event PayoutDeferred(address indexed recipient, uint256 amount);
     event Claimed(address indexed recipient, uint256 amount);
+    event Staked(uint64 indexed providerId, address operator, address withdrawal);
+    event UnbondingInitiated(uint64 indexed providerId, bytes32 exitRoot, uint64 exitLeafCount);
+    event Withdrawn(uint64 indexed providerId);
+    event Announced(string url);
+    event Retracted();
 
     // ---------------------------------------------------------------------------
     // §11 EIP-712. Typehash strings are exact and single-line (§11.2 wraps them for
@@ -163,6 +175,38 @@ contract BlobsitterInstance {
     uint64 public activityCheckpointLeafCount;
     /// §15.5 pull-fallback ledger: balances a failed push parked here; claim() drains.
     mapping(address => uint256) public claimable;
+
+    // ---------------------------------------------------------------------------
+    // §12.2 provider state.
+    // ---------------------------------------------------------------------------
+
+    enum ProviderStatus {
+        NONE,
+        ACTIVE,
+        UNBONDING,
+        EXITED,
+        SLASHED
+    }
+
+    struct Provider {
+        address operator; // immutable; hot key: proofs, responses, initiate unbonding
+        address withdrawal; // immutable; the ONLY address the stake can be paid to
+        ProviderStatus status;
+        uint64 anchor; // stake time; custody periods count from here (M3)
+        uint64 lastProvenPlusOne; // spec's lastProven + 1 (0 encodes −1); custody, M3
+        bool lastDegraded; // custody, M3
+        uint64 commitPeriodPlusOne; // custody commit (0 = none); M3
+        bytes32 commitSeed;
+        bytes32 commitRoot;
+        uint64 commitLeafCount;
+        uint64 unbondingAt; // 0 while ACTIVE
+        bytes32 exitRoot; // Root(n, peaks) snapshotted at initiateUnbonding
+        uint64 exitLeafCount;
+        uint32 openChallenges; // blocks withdraw() while nonzero
+    }
+
+    uint64 public nextProviderId = 1; // §9: providerId 0 means "none", never assigned
+    mapping(uint64 => Provider) internal providers;
 
     constructor(Params memory p) {
         publisher = p.publisher;
@@ -379,6 +423,81 @@ contract BlobsitterInstance {
         successor = target;
         emit SuccessorSet(target);
         _reimburse(msg.sender, 0, false);
+    }
+
+    // ---------------------------------------------------------------------------
+    // §12.4 provider lifecycle.
+    // ---------------------------------------------------------------------------
+
+    /// The full provider record (the mapping is internal; a flat auto-getter would be
+    /// unwieldy with the nested custody fields).
+    function getProvider(uint64 providerId) external view returns (Provider memory) {
+        return providers[providerId];
+    }
+
+    /// Bonded tier entry. The caller is irrelevant thereafter: the record is keyed by
+    /// providerId, operated by `operator`, and pays out only to `withdrawal`.
+    function stake(address operator, address withdrawal)
+        external
+        payable
+        returns (uint64 providerId)
+    {
+        if (msg.value != stakeWei) revert WrongStakeAmount(stakeWei);
+        if (operator == address(0) || withdrawal == address(0)) revert ZeroAddress();
+        providerId = nextProviderId++;
+        Provider storage p = providers[providerId];
+        p.operator = operator;
+        p.withdrawal = withdrawal;
+        p.status = ProviderStatus.ACTIVE;
+        p.anchor = uint64(block.timestamp);
+        // lastProvenPlusOne = 0 encodes the spec's lastProven = −1.
+        emit Staked(providerId, operator, withdrawal);
+    }
+
+    /// Snapshot the exit pin and end custody obligations. Always allowed while ACTIVE.
+    function initiateUnbonding(uint64 providerId) external {
+        Provider storage p = _provider(providerId);
+        if (msg.sender != p.operator) revert NotOperator(providerId);
+        if (p.status != ProviderStatus.ACTIVE) revert NotActive(providerId);
+        p.status = ProviderStatus.UNBONDING;
+        p.unbondingAt = uint64(block.timestamp);
+        p.exitRoot = MMR.bagRoot(leafCount, peaks);
+        p.exitLeafCount = leafCount;
+        // Custody obligations end: void any pending commit (fields live from M3 on),
+        // which also cancels lapse eligibility.
+        p.commitPeriodPlusOne = 0;
+        p.commitSeed = 0;
+        p.commitRoot = 0;
+        p.commitLeafCount = 0;
+        emit UnbondingInitiated(providerId, p.exitRoot, p.exitLeafCount);
+    }
+
+    /// Release the stake — to the withdrawal address only — once the delay has passed
+    /// and no challenge is open. Anyone may call.
+    function withdraw(uint64 providerId) external {
+        Provider storage p = _provider(providerId);
+        if (p.status != ProviderStatus.UNBONDING) revert NotUnbonding(providerId);
+        uint64 until = p.unbondingAt + unbondingDelay;
+        if (block.timestamp < until) revert UnbondingDelayActive(until);
+        if (p.openChallenges != 0) revert OpenChallengesRemain(p.openChallenges);
+        p.status = ProviderStatus.EXITED;
+        emit Withdrawn(providerId);
+        _payout(p.withdrawal, stakeWei);
+    }
+
+    /// Mirror tier (§12.4): events only — no state, no stake, no protocol standing.
+    function announce(string calldata url) external {
+        emit Announced(url);
+    }
+
+    function retract() external {
+        emit Retracted();
+    }
+
+    /// Provider record lookup; NONE means the id was never assigned.
+    function _provider(uint64 providerId) internal view returns (Provider storage p) {
+        p = providers[providerId];
+        if (p.status == ProviderStatus.NONE) revert UnknownProvider(providerId);
     }
 
     // ---------------------------------------------------------------------------
