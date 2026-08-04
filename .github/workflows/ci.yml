@@ -32,8 +32,12 @@ jobs:
         working-directory: contracts
       - run: forge build
         working-directory: contracts
+      # Fork tests (test/fork/*) self-skip unless ETH_RPC_URL is set; add the repo
+      # secret to enable them in CI. They always work locally with an exported URL.
       - run: forge test -vv
         working-directory: contracts
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
       # Informational for now; a coverage gate threshold is a pre-audit decision.
       - run: forge coverage --report summary --ir-minimum
         working-directory: contracts

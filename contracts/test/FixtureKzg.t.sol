@@ -19,7 +19,7 @@ contract FixtureKzgTest is InstanceTestBase {
     string internal json;
     BlobsitterInstance internal fx;
 
-    function setUp() public override {
+    function setUp() public virtual override {
         super.setUp();
         json = vm.readFile("test/fixtures/kzg_opening.json");
         address at = json.readAddress(".instance");

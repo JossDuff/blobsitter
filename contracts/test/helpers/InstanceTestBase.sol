@@ -117,9 +117,7 @@ abstract contract InstanceTestBase is Test {
         for (uint256 j = 0; j < blobCount; ++j) {
             d.blobVersionedHashes[j] = zeroBlobVh;
             o[j] = BlobsitterInstance.BlobOpening({
-                y: bytes32(0),
-                commitment: INFINITY_G1,
-                kzgProof: INFINITY_G1
+                y: bytes32(0), commitment: INFINITY_G1, kzgProof: INFINITY_G1
             });
         }
         d.newSubtreePeaks = TestVec.subtreePeaks(n0, m);
