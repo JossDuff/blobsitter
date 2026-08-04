@@ -34,6 +34,8 @@ contract ProviderHandler is CommonBase, StdUtils {
     uint256 public slashCount;
     uint256 public expectedBalance; // I1: exact expected instance balance
     mapping(uint64 => uint64) public lastProvenGhost; // I16 monotonicity mirror
+    uint256 public reimbursedTotal; // I17: everything the paymaster ever paid carriers
+    uint64 public immutable trackingStart; // I17 window opens here (bucket full then)
 
     constructor(
         BlobsitterInstance instance_,
@@ -45,6 +47,7 @@ contract ProviderHandler is CommonBase, StdUtils {
         goodProof = goodProof_;
         zeroBlobVh = zeroBlobVh_;
         infinityG1 = infinityG1_;
+        trackingStart = uint64(block.timestamp);
     }
 
     // -------------------------------------------------------------------- actions
@@ -73,7 +76,13 @@ contract ProviderHandler is CommonBase, StdUtils {
         });
         vm.blobhashes(d.blobVersionedHashes);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(PUBLISHER_PK, instance.declarationDigest(d));
+        uint256 pmBefore = address(instance.paymaster()).balance;
+        uint256 selfBefore = address(this).balance;
         instance.declareFor(d, abi.encodePacked(r, s, v), o, goodProof);
+        // I20 flavor of I4: whatever left the paymaster arrived at this carrier whole.
+        uint256 outflow = pmBefore - address(instance.paymaster()).balance;
+        require(address(this).balance == selfBefore + outflow, "carrier delta != pm outflow");
+        reimbursedTotal += outflow;
     }
 
     function stakeProvider(uint256 seed) external {
@@ -186,7 +195,7 @@ contract ProviderHandler is CommonBase, StdUtils {
                 c.challenger.balance == challengerBefore + bounty + c.bond,
                 "I4/I5: challenger delta"
             );
-            expectedBalance -= (bounty + c.bond);
+            expectedBalance -= (bounty + c.bond) + (STAKE - bounty); // remainder absorbed
         } else {
             require(c.challenger.balance == challengerBefore + c.bond, "I4: refund delta");
             expectedBalance -= c.bond;
@@ -287,7 +296,8 @@ contract ProviderHandler is CommonBase, StdUtils {
             require(!stakeDistributed[id], "I3: second distribution via lapse");
             stakeDistributed[id] = true;
             slashCount += 1;
-            expectedBalance -= (STAKE * instance.bountyBps()) / 10_000;
+            uint256 bounty = (STAKE * instance.bountyBps()) / 10_000;
+            expectedBalance -= bounty + (STAKE - bounty); // bounty out, remainder absorbed
             _observe(id);
         } catch (bytes memory err) {
             require(!shouldSucceed, "I15: lapse reverted while lapsable");
@@ -408,7 +418,7 @@ contract InvariantsProviderTest is InstanceTestBase {
             BlobsitterInstance.Challenge memory ch = instance.getChallenge(c);
             if (!ch.resolved) openBonds += ch.bond;
         }
-        uint256 expected = stakesHeld + openBonds + instance.pendingSlashRemainders();
+        uint256 expected = stakesHeld + openBonds;
         assertEq(address(instance).balance, expected, "I1: balance != stakes+bonds+remainders");
         assertEq(address(instance).balance, handler.expectedBalance(), "I1: ghost drift");
     }
@@ -426,14 +436,27 @@ contract InvariantsProviderTest is InstanceTestBase {
         }
     }
 
-    /// I5 — slash arithmetic: retained remainders are exactly slashCount × (stake −
-    /// bounty); with each bounty paid out, distributions sum to whole stakes.
+    /// I5 — slash arithmetic: the paymaster's balance is exactly the absorbed
+    /// remainders (slashCount × (stake − bounty)) minus what it reimbursed carriers —
+    /// with each bounty paid out, every distribution sums to whole stakes.
     function invariant_I5_slashArithmetic() public view {
         uint256 bounty = (2 ether * 1500) / 10_000;
         assertEq(
-            instance.pendingSlashRemainders(),
-            handler.slashCount() * (2 ether - bounty),
-            "I5: remainder sum"
+            address(instance.paymaster()).balance,
+            handler.slashCount() * (2 ether - bounty) - handler.reimbursedTotal(),
+            "I5: absorbed minus reimbursed"
+        );
+    }
+
+    /// I17 — bucket bound: the level never exceeds the cap, and everything reimbursed
+    /// since tracking began (bucket at most full then) fits cap + rate x elapsed.
+    function invariant_I17_bucketBound() public view {
+        assertLe(instance.paymaster().bucketLevel(), 1.5 ether, "level over cap");
+        uint256 elapsed = block.timestamp - handler.trackingStart();
+        assertLe(
+            handler.reimbursedTotal(),
+            1.5 ether + (0.05 ether * elapsed) / 1 days,
+            "I17: outflow beat the bucket"
         );
     }
 

@@ -3,6 +3,8 @@ pragma solidity 0.8.28;
 
 import {MMR} from "./libraries/MMR.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
+import {PayoutSink} from "./PayoutSink.sol";
+import {BlobsitterPaymaster} from "./BlobsitterPaymaster.sol";
 
 /// Minimal ERC-1271 surface the instance needs to verify publisher intent signatures.
 interface IERC1271 {
@@ -18,11 +20,11 @@ interface IERC1271 {
 /// pausing. The publisher never holds or spends ETH — every publisher action arrives as
 /// an EIP-712-signed intent carried by an arbitrary EOA and verified via ERC-1271.
 ///
-/// Milestone scope: the publication core, the provider lifecycle, possession challenges,
-/// custody proofs (commit/prove/escape/lapse), and the push-with-pull-fallback payout
-/// pattern are implemented. The paymaster is milestone 4 — its reimbursement hook is a
-/// documented no-op and slash remainders accumulate in pendingSlashRemainders until then.
-contract BlobsitterInstance {
+/// The contract surface is complete: publication, provider lifecycle, possession
+/// challenges, custody proofs, the payout pattern, and the paymaster (deployed by this
+/// constructor, bound one-way). The only remaining swap before freeze is the real
+/// SP1 verifier + public-value encodings once the circuit spec is written.
+contract BlobsitterInstance is PayoutSink {
     // ---------------------------------------------------------------------------
     // Errors (publication subset). Names and argument types are fixed by the normative
     // spec; tests match on exact selectors.
@@ -32,6 +34,7 @@ contract BlobsitterInstance {
     error IntentExpired(uint64 deadline);
     error NotDesignatedCarrier(address want);
     error ZeroAddress();
+    error Reentered();
     error EmptyUpdate();
     error BlobCountMismatch(uint256 expected);
     error BlobHashMismatch(uint256 index);
@@ -40,8 +43,6 @@ contract BlobsitterInstance {
     error PointEvaluationFailed(uint256 blobIndex);
     error InvalidEquivalenceProof();
     error SuccessorAlreadySet();
-    error NothingClaimable();
-    error PayoutFailed();
     error WrongStakeAmount(uint256 expected);
     error UnknownProvider(uint64 providerId);
     error NotOperator(uint64 providerId);
@@ -83,8 +84,6 @@ contract BlobsitterInstance {
     );
     event AppPointerSet(uint64 indexed nonce, bytes32 pointer);
     event SuccessorSet(address target);
-    event PayoutDeferred(address indexed recipient, uint256 amount);
-    event Claimed(address indexed recipient, uint256 amount);
     event Staked(uint64 indexed providerId, address operator, address withdrawal);
     event UnbondingInitiated(uint64 indexed providerId, bytes32 exitRoot, uint64 exitLeafCount);
     event Withdrawn(uint64 indexed providerId);
@@ -101,6 +100,7 @@ contract BlobsitterInstance {
     );
     event ChallengeAnswered(uint64 indexed challengeId);
     event ChallengeRefunded(uint64 indexed challengeId);
+    event ChallengeTimedOut(uint64 indexed challengeId);
     event Slashed(uint64 indexed providerId, SlashCause cause, address executor);
     event CustodyCommitted(
         uint64 indexed providerId, uint64 period, bytes32 seed, bytes32 root, uint64 leafCount
@@ -211,8 +211,6 @@ contract BlobsitterInstance {
     // Declarations that grow the MMR by enough chunks restart the clock (see declareFor).
     uint64 public activityCheckpointTime;
     uint64 public activityCheckpointLeafCount;
-    /// Pull-fallback ledger: balances of failed pushes park here; claim() drains.
-    mapping(address => uint256) public claimable;
 
     // ---------------------------------------------------------------------------
     // Provider state.
@@ -277,11 +275,13 @@ contract BlobsitterInstance {
     uint64 public nextChallengeId;
     mapping(uint64 => Challenge) internal challengeRecords;
 
-    /// Slash remainders (stake − bounty) held by the instance.
-    /// TODO(M4): route through paymaster.absorbSlash() once the constructor deploys
-    /// the paymaster; this accumulator then disappears. Revisit before any deployment
-    /// freeze.
-    uint256 public pendingSlashRemainders;
+    /// The instance's funding sidecar, deployed below and bound one-way. Donors send
+    /// ETH here; the instance directs reimbursements and slash remainders to it.
+    BlobsitterPaymaster public immutable paymaster;
+
+    /// Publication-entrypoint reentrancy latch (transient: resets every transaction).
+    /// Blocks a reimbursed carrier from reentering publication from inside the push.
+    uint256 private transient _entered;
 
     constructor(Params memory p) {
         publisher = p.publisher;
@@ -303,7 +303,18 @@ contract BlobsitterInstance {
         // declarations — and the dormancy clock starts ticking at deployment.
         activityCheckpointTime = uint64(block.timestamp);
         activityCheckpointLeafCount = 0;
-        // Milestone 4: the paymaster is deployed here and bound one-way.
+        // The paymaster cannot read this instance's immutables mid-construction, so
+        // the sizing travels as constructor arguments.
+        paymaster = new BlobsitterPaymaster(p.bucketRateWeiPerDay, p.bucketCapWei, p.dormancyWindow);
+    }
+
+    /// One publication entrypoint at a time: reentering (say, from a reimbursement
+    /// push) reverts the inner call, which at worst defers the carrier's payout.
+    modifier nonReentrant() {
+        if (_entered != 0) revert Reentered();
+        _entered = 1;
+        _;
+        _entered = 0;
     }
 
     // ---------------------------------------------------------------------------
@@ -405,7 +416,8 @@ contract BlobsitterInstance {
         bytes calldata publisherSig,
         BlobOpening[] calldata openings,
         bytes calldata equivalenceProof
-    ) external {
+    ) external nonReentrant {
+        uint256 gasStart = gasleft(); // reimbursement bracket opens at entry
         // Check 1: intent validity.
         if (block.timestamp > d.deadline) revert IntentExpired(d.deadline);
         if (d.nonce != declarationNonce) revert WrongNonce(declarationNonce);
@@ -466,7 +478,7 @@ contract BlobsitterInstance {
         );
 
         // Step 6: carrier reimbursement — after all state changes.
-        _reimburse(msg.sender, blobCount, true);
+        _reimburse(msg.sender, blobCount, true, gasStart);
     }
 
     // ---------------------------------------------------------------------------
@@ -476,7 +488,9 @@ contract BlobsitterInstance {
 
     function setAppPointer(uint64 nonce, uint64 deadline, bytes32 pointer, bytes calldata sig)
         external
+        nonReentrant
     {
+        uint256 gasStart = gasleft();
         if (block.timestamp > deadline) revert IntentExpired(deadline);
         if (nonce != appPointerNonce) revert WrongNonce(appPointerNonce);
         _requireValidSignature(setAppPointerDigest(nonce, deadline, pointer), sig);
@@ -484,12 +498,14 @@ contract BlobsitterInstance {
         appPointerNonce = nonce + 1;
         appPointer = pointer;
         emit AppPointerSet(nonce, pointer);
-        _reimburse(msg.sender, 0, false);
+        _reimburse(msg.sender, 0, false, gasStart);
     }
 
     function setSuccessor(uint64 nonce, uint64 deadline, address target, bytes calldata sig)
         external
+        nonReentrant
     {
+        uint256 gasStart = gasleft();
         if (block.timestamp > deadline) revert IntentExpired(deadline);
         if (nonce != successorNonce) revert WrongNonce(successorNonce);
         _requireValidSignature(setSuccessorDigest(nonce, deadline, target), sig);
@@ -501,7 +517,7 @@ contract BlobsitterInstance {
         successorNonce = nonce + 1;
         successor = target;
         emit SuccessorSet(target);
-        _reimburse(msg.sender, 0, false);
+        _reimburse(msg.sender, 0, false, gasStart);
     }
 
     // ---------------------------------------------------------------------------
@@ -727,7 +743,7 @@ contract BlobsitterInstance {
 
     /// Slash a provider who has missed two consecutive custody periods and let the
     /// grace window pass uncured. Anyone may call; the bounty pays the caller and the
-    /// remainder is held for the future paymaster. An accepted proof at ANY point
+    /// remainder absorbed by the paymaster. An accepted proof at ANY point
     /// before this executes resets the clock — cure always wins if it lands first.
     function lapse(uint64 providerId) external {
         Provider storage p = _provider(providerId);
@@ -739,8 +755,7 @@ contract BlobsitterInstance {
 
         p.status = ProviderStatus.SLASHED;
         uint256 bounty = (stakeWei * bountyBps) / 10_000;
-        // Remainder held pending the paymaster (see pendingSlashRemainders TODO).
-        pendingSlashRemainders += stakeWei - bounty;
+        paymaster.absorbSlash{value: stakeWei - bounty}();
         emit Slashed(providerId, SlashCause.LAPSE, msg.sender);
         _payout(msg.sender, bounty);
     }
@@ -893,9 +908,9 @@ contract BlobsitterInstance {
         if (p.status != ProviderStatus.SLASHED) {
             p.status = ProviderStatus.SLASHED;
             uint256 bounty = (stakeWei * bountyBps) / 10_000;
-            // Remainder held pending the paymaster (see pendingSlashRemainders TODO).
-            pendingSlashRemainders += stakeWei - bounty;
+            paymaster.absorbSlash{value: stakeWei - bounty}();
             emit Slashed(c.providerId, SlashCause.CHALLENGE_TIMEOUT, msg.sender);
+            emit ChallengeTimedOut(challengeId);
             _payout(c.challenger, bounty + c.bond); // bounty + bond refund
         } else {
             emit ChallengeRefunded(challengeId);
@@ -906,36 +921,6 @@ contract BlobsitterInstance {
     function _challenge(uint64 challengeId) internal view returns (Challenge storage c) {
         c = challengeRecords[challengeId];
         if (c.challenger == address(0)) revert UnknownChallenge(challengeId);
-    }
-
-    // ---------------------------------------------------------------------------
-    // Payouts: push with pull fallback. Every ETH payout in the system uses this one
-    // pattern; no payout path can revert the operation that triggered it.
-    // ---------------------------------------------------------------------------
-
-    /// Push stipend: enough gas for a multisig receive, too little for reentrancy
-    /// mischief under checks-effects-interactions ordering.
-    uint256 private constant PAYOUT_GAS_STIPEND = 50_000;
-
-    /// Drain the caller's pull-fallback balance. A failing transfer reverts (state
-    /// restored) and can be retried later.
-    function claim() external {
-        uint256 amount = claimable[msg.sender];
-        if (amount == 0) revert NothingClaimable();
-        claimable[msg.sender] = 0;
-        (bool ok,) = msg.sender.call{value: amount, gas: PAYOUT_GAS_STIPEND}("");
-        if (!ok) revert PayoutFailed();
-        emit Claimed(msg.sender, amount);
-    }
-
-    /// Push `amount` to `to`; on any failure park it in the claimable ledger instead.
-    /// Callers MUST finish all state changes first (CEI).
-    function _payout(address to, uint256 amount) internal {
-        (bool ok,) = to.call{value: amount, gas: PAYOUT_GAS_STIPEND}("");
-        if (!ok) {
-            claimable[to] += amount;
-            emit PayoutDeferred(to, amount);
-        }
     }
 
     // ---------------------------------------------------------------------------
@@ -983,10 +968,29 @@ contract BlobsitterInstance {
         return "";
     }
 
-    /// Carrier reimbursement hook (declaration step 6). Milestone 4 deploys the
-    /// paymaster in the constructor and wires this up (gas-capped call, failure ignored,
-    /// reentrancy-guarded, strictly after all state changes). Until then: no-op.
-    function _reimburse(address carrier, uint256 numBlobs, bool isDeclaration) internal {
-        // no-op until milestone 4 (paymaster)
+    /// The gas the reimbursement bracket cannot measure: the paymaster call itself,
+    /// the payout push, and return overhead. PROVISIONAL 25_000 — calibrate against
+    /// the gas-snapshot test and freeze before audit.
+    uint256 private constant TAIL_GAS = 25_000;
+    /// Stipend for the paymaster call; its failure is ignored so an underfunded or
+    /// misbehaving paymaster can never block publication. PROVISIONAL — freeze with
+    /// TAIL_GAS before audit.
+    uint256 private constant REIMBURSE_GAS_CAP = 200_000;
+
+    /// Carrier reimbursement (declaration step 6), strictly after all state changes.
+    /// The instance alone knows the transaction's shape, so it computes the amount:
+    /// the blob fee at the current blob basefee, the bracketed execution gas plus the
+    /// intrinsic 21k, calldata priced at 16 gas/byte (over-approximating zero bytes
+    /// for simplicity), and the unmeasurable tail — all at block.basefee, never
+    /// tx.gasprice (priority fees are the carrier's own cost) — plus the fixed tip
+    /// and, for declarations, the proving subsidy.
+    function _reimburse(address carrier, uint256 numBlobs, bool isDeclaration, uint256 gasStart)
+        internal
+    {
+        uint256 measured = gasStart - gasleft();
+        uint256 amount = numBlobs * 131_072 * block.blobbasefee
+            + (measured + 21_000 + 16 * msg.data.length + TAIL_GAS) * block.basefee + carrierTipWei
+            + (isDeclaration ? provingSubsidyWei : 0);
+        try paymaster.reimburse{gas: REIMBURSE_GAS_CAP}(carrier, amount, isDeclaration) {} catch {} // reimbursement failure is always a no-op for publication
     }
 }

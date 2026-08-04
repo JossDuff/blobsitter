@@ -487,7 +487,9 @@ resolveTimeout(challengeId)              # anyone
 ```
 - `now ≥ openedAt + responseWindow`, unresolved.
 - If provider not yet SLASHED: status = SLASHED; bounty `stake · bountyBps / 10000` to the
-  challenger, remainder to the paymaster; challenger's bond refunded; emit `Slashed`.
+  challenger, remainder to the paymaster; challenger's bond refunded; emit `Slashed` and
+  `ChallengeTimedOut(challengeId)` (every challenge ends with exactly one of Answered /
+  Refunded / TimedOut).
 - If provider already SLASHED (by an earlier challenge or lapse): bond refunded only —
   watchdogs are not punished for piling onto a dying provider.
 - Either way: resolved; `openChallenges −= 1`.
@@ -558,6 +560,7 @@ Staked(providerId, operator, withdrawal) UnbondingInitiated(providerId, exitRoot
 Withdrawn(providerId)                    Slashed(providerId, cause, executor)
 ChallengeOpened(challengeId, providerId, indices[], bond, pinnedRoot, pinnedLeafCount, deadline)
 ChallengeAnswered(challengeId)           ChallengeRefunded(challengeId)
+ChallengeTimedOut(challengeId)
 CustodyCommitted(providerId, period, seed, root, leafCount)
 CustodyProven(providerId, period, degraded)
 Announced(url) / Retracted()
@@ -695,8 +698,11 @@ State: `(levelWei, lastUpdate)`. Continuous per-second refill:
 level = min(capWei, levelWei + ratePerSecond × (now − lastUpdate))
 ```
 
-with `ratePerSecond = 0.05 ETH / 86_400 s` and `capWei = 1.5 ETH` as sized. Only carrier
-reimbursements draw from the bucket; reclaims (§15.4) and pull-claims (§15.5) do not.
+with `ratePerSecond = 0.05 ETH / 86_400 s` and `capWei = 1.5 ETH` as sized. The bucket
+**initializes full** (`levelWei = capWei`) at deployment: the limiter bounds the drain
+rate, not launch readiness, so carriers are reimbursable as soon as donations exist.
+Only carrier reimbursements draw from the bucket; reclaims (§15.4) and pull-claims
+(§15.5) do not.
 A reimbursement request exceeding the current level pays nothing (§15.2 all-or-nothing);
 a paid request subtracts its full amount.
 
@@ -743,6 +749,8 @@ IntentExpired(uint64 deadline)       block.timestamp > deadline
 NotDesignatedCarrier(address want)   designatedCarrier set and ≠ msg.sender
 NotOperator(uint64 providerId)       caller ≠ provider.operator
 ZeroAddress()                        operator/withdrawal/successor target is zero
+Reentered()                          publication entrypoint reentered (e.g. from within
+                                     the carrier-reimbursement push)
 ```
 
 **Declarations (§12.3)**

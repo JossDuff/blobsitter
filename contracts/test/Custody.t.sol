@@ -271,7 +271,7 @@ contract CustodyTest is InstanceTestBase {
         instance.lapse(pid);
 
         assertEq(address(this).balance, 10 ether - 2 ether + bounty, "bounty to the executor");
-        assertEq(instance.pendingSlashRemainders(), 2 ether - bounty, "remainder held");
+        assertEq(address(instance.paymaster()).balance, 2 ether - bounty, "remainder absorbed");
         assertEq(
             uint8(instance.getProvider(pid).status),
             uint8(BlobsitterInstance.ProviderStatus.SLASHED)

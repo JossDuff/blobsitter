@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {BlobsitterInstance} from "src/BlobsitterInstance.sol";
+import {PayoutSink} from "src/PayoutSink.sol";
 
 /// Harness exposing the internal payout push for unit tests (the real callers —
 /// withdraw, bond payouts, bounties — are exercised in Provider/Challenge tests).
@@ -76,12 +77,12 @@ contract PayoutTest is Test {
     function test_payout_fallbackAndClaim() public {
         // Rejecting receiver: push fails, ledger credited, operation not reverted.
         vm.expectEmit(address(harness));
-        emit BlobsitterInstance.PayoutDeferred(address(moody), 1 ether);
+        emit PayoutSink.PayoutDeferred(address(moody), 1 ether);
         harness.pay{value: 1 ether}(address(moody));
         assertEq(harness.claimable(address(moody)), 1 ether, "deferred");
 
         // Claim while still rejecting: reverts retriably, balance intact.
-        vm.expectRevert(BlobsitterInstance.PayoutFailed.selector);
+        vm.expectRevert(PayoutSink.PayoutFailed.selector);
         moody.doClaim();
         assertEq(harness.claimable(address(moody)), 1 ether, "restored after failed claim");
 
@@ -92,14 +93,14 @@ contract PayoutTest is Test {
         // Retry after the receiver relents: pays the full accumulated balance.
         moody.setAccepting(true);
         vm.expectEmit(address(harness));
-        emit BlobsitterInstance.Claimed(address(moody), 3 ether);
+        emit PayoutSink.Claimed(address(moody), 3 ether);
         moody.doClaim();
         assertEq(address(moody).balance, 3 ether, "claimed");
         assertEq(harness.claimable(address(moody)), 0, "drained");
     }
 
     function test_payout_claimNothing() public {
-        vm.expectRevert(BlobsitterInstance.NothingClaimable.selector);
+        vm.expectRevert(PayoutSink.NothingClaimable.selector);
         harness.claim();
     }
 
