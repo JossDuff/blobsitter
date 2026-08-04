@@ -408,7 +408,7 @@ contract InvariantsProviderTest is InstanceTestBase {
             BlobsitterInstance.Challenge memory ch = instance.getChallenge(c);
             if (!ch.resolved) openBonds += ch.bond;
         }
-        uint256 expected = stakesHeld + openBonds + instance.pendingSlashRemainders();
+        uint256 expected = stakesHeld + openBonds;
         assertEq(address(instance).balance, expected, "I1: balance != stakes+bonds+remainders");
         assertEq(address(instance).balance, handler.expectedBalance(), "I1: ghost drift");
     }
@@ -431,9 +431,9 @@ contract InvariantsProviderTest is InstanceTestBase {
     function invariant_I5_slashArithmetic() public view {
         uint256 bounty = (2 ether * 1500) / 10_000;
         assertEq(
-            instance.pendingSlashRemainders(),
+            address(instance.paymaster()).balance,
             handler.slashCount() * (2 ether - bounty),
-            "I5: remainder sum"
+            "I5: absorbed remainder sum"
         );
     }
 

@@ -287,7 +287,7 @@ contract ChallengeTest is InstanceTestBase {
 
         uint256 bounty = (2 ether * 1500) / 10_000;
         assertEq(CHALLENGER.balance, 100 ether - bond + bounty + bond, "bounty + bond refund");
-        assertEq(instance.pendingSlashRemainders(), 2 ether - bounty, "remainder held for M4");
+        assertEq(address(instance.paymaster()).balance, 2 ether - bounty, "remainder absorbed");
         // I5: the distribution sums exactly to the stake.
         assertEq(bounty + (2 ether - bounty), 2 ether);
         assertEq(
@@ -309,14 +309,16 @@ contract ChallengeTest is InstanceTestBase {
         vm.warp(block.timestamp + 7 days);
 
         instance.resolveTimeout(idA);
-        uint256 remaindersAfterFirst = instance.pendingSlashRemainders();
+        uint256 remaindersAfterFirst = address(instance.paymaster()).balance;
 
         vm.expectEmit(address(instance));
         emit BlobsitterInstance.ChallengeRefunded(idB);
         instance.resolveTimeout(idB);
 
         assertEq(
-            instance.pendingSlashRemainders(), remaindersAfterFirst, "no second distribution (I3)"
+            address(instance.paymaster()).balance,
+            remaindersAfterFirst,
+            "no second distribution (I3)"
         );
         uint256 bounty = (2 ether * 1500) / 10_000;
         assertEq(CHALLENGER.balance, 100 ether + bounty, "both bonds back + one bounty");
