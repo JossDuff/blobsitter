@@ -517,13 +517,19 @@ submitProofEscape(providerId, uint64 n, bytes32[] peaks, ChunkProof[maxSample] r
     For j in [0, maxSample): idx = custody_index(instance, commit.seed, providerId, j, n)
     (§9, computed on-chain) and verify(reveals[j], idx, …, n, peaks) (§7.2) MUST pass.
     Effects: as submitProof but lastDegraded = true; emits CustodyProven(degraded=true).
+
+    Empty snapshot (commit.leafCount == 0): custody of an empty dataset is vacuous, and
+    the §9 reduction is undefined at leafCount 0. Such a commit is proven by
+    submitProofEscape with an EMPTY reveals array (the pin check still applies); this
+    keeps early stakers curable and the lapse clock sound before the first declaration.
 ```
 
 ```
 lapse(providerId)                        # anyone
     requires ACTIVE (UNBONDING and SLASHED are immune) and
              now ≥ anchor + (lastProven + 3) · custodyPeriod + lapseGrace.
-    status = SLASHED; bounty to caller, remainder to paymaster; emits Lapsed.
+    status = SLASHED; bounty to caller, remainder to paymaster;
+    emits Slashed(providerId, LAPSE, executor).
 ```
 
 Health views (all free reads): `custodyStatus(providerId)` derives
@@ -554,7 +560,7 @@ ChallengeOpened(challengeId, providerId, indices[], bond, pinnedRoot, pinnedLeaf
 ChallengeAnswered(challengeId)           ChallengeRefunded(challengeId)
 CustodyCommitted(providerId, period, seed, root, leafCount)
 CustodyProven(providerId, period, degraded)
-Lapsed(providerId, executor)             Announced(url) / Retracted()
+Announced(url) / Retracted()
 ```
 
 ## 13. State machines
@@ -773,7 +779,9 @@ AlreadyResolved(uint64 challengeId)
 ResponseWindowClosed(uint64 deadline)    respond at now ≥ deadline
 ResponseWindowStillOpen(uint64 deadline) resolveTimeout at now < deadline
 IndicesMismatch()                    supplied indices don't hash to indicesHash
-ProofCountMismatch(uint256 expected) respond proofs array length ≠ challenge index count
+ProofCountMismatch(uint256 expected) proof-carrier count ≠ required: respond proofs vs the
+                                     challenge index count; escape reveals vs maxSample
+                                     (vs 0 for an empty snapshot)
 PinMismatch()                        supplied (n, peaks) don't re-bag to the pinned root
 InvalidInclusionProof(uint256 sampleIndex)
 ProviderSlashed(uint64 providerId)   respond attempted after slash

@@ -63,8 +63,8 @@ and bonded storage providers accountable via challenges and slashing.
 - `reference/` — Rust reference implementation of normative §1–10 + §11 EIP-712 digests;
   `src/bin/mmr_oracle.rs` is the forge suite's ffi differential oracle.
 - `contracts/` — Foundry project: the instance template (publication core, provider
-  lifecycle, and challenges as of milestone 2; custody is M3, paymaster M4) + mocks,
-  tests, and generated fixtures (`test/fixtures/`, never hand-edited).
+  lifecycle, challenges, and custody proofs as of milestone 3; the paymaster is M4) +
+  mocks, tests, and generated fixtures (`test/fixtures/`, never hand-edited).
 - `tools/kzg-fixture/` — generates the real-KZG test fixture from c-kzg's embedded
   Ethereum setup (no ceremony is ever run by or for this protocol).
 - Planned: `circuits/` (SP1), `daemon/`, `carrier/`, `publisher/`.

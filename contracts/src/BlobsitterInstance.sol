@@ -19,9 +19,9 @@ interface IERC1271 {
 /// an EIP-712-signed intent carried by an arbitrary EOA and verified via ERC-1271.
 ///
 /// Milestone scope: the publication core, the provider lifecycle, possession challenges,
-/// and the push-with-pull-fallback payout pattern are implemented. Custody proofs are
-/// milestone 3; the paymaster is milestone 4 — its reimbursement hook is a documented
-/// no-op and slash remainders accumulate in pendingSlashRemainders until then.
+/// custody proofs (commit/prove/escape/lapse), and the push-with-pull-fallback payout
+/// pattern are implemented. The paymaster is milestone 4 — its reimbursement hook is a
+/// documented no-op and slash remainders accumulate in pendingSlashRemainders until then.
 contract BlobsitterInstance {
     // ---------------------------------------------------------------------------
     // Errors (publication subset). Names and argument types are fixed by the normative
@@ -63,6 +63,11 @@ contract BlobsitterInstance {
     error PinMismatch();
     error InvalidInclusionProof(uint256 sampleIndex);
     error ProviderSlashed(uint64 providerId);
+    error AlreadyCommitted(uint64 period);
+    error NoCommit();
+    error CommitFromEarlierPeriod(uint64 committed, uint64 current);
+    error InvalidCustodyProof();
+    error NotLapsable(uint64 lapsableAt);
 
     // ---------------------------------------------------------------------------
     // Events (publication subset) — the contract surface off-chain daemons index to
@@ -97,6 +102,10 @@ contract BlobsitterInstance {
     event ChallengeAnswered(uint64 indexed challengeId);
     event ChallengeRefunded(uint64 indexed challengeId);
     event Slashed(uint64 indexed providerId, SlashCause cause, address executor);
+    event CustodyCommitted(
+        uint64 indexed providerId, uint64 period, bytes32 seed, bytes32 root, uint64 leafCount
+    );
+    event CustodyProven(uint64 indexed providerId, uint64 period, bool degraded);
 
     // ---------------------------------------------------------------------------
     // EIP-712 machinery. Typehash strings are exact and single-line (any wrapping in
@@ -568,6 +577,197 @@ contract BlobsitterInstance {
     function _provider(uint64 providerId) internal view returns (Provider storage p) {
         p = providers[providerId];
         if (p.status == ProviderStatus.NONE) revert UnknownProvider(providerId);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Custody proofs: each period (30 days as sized, counted from the provider's
+    // stake time), an active provider commits to a randomness seed and a snapshot of
+    // the dataset, then proves possession — normally with a succinct proof over
+    // 16,384 sampled chunks, or through the escape hatch: revealing the raw chunks
+    // at 32 contract-derived positions with Merkle proofs. The escape hatch is pure
+    // keccak and calldata, and must stay that way forever: it is the path that
+    // still works when all proving infrastructure has rotted.
+    // ---------------------------------------------------------------------------
+
+    /// The custody period index for a provider at the current time: whole periods
+    /// elapsed since their stake-time anchor.
+    function custodyPeriodIndex(uint64 providerId) public view returns (uint64) {
+        Provider storage p = _provider(providerId);
+        return uint64((block.timestamp - p.anchor) / custodyPeriod);
+    }
+
+    /// The sampled chunk position for ordinal j: a keccak (0x04 domain tag) over the
+    /// instance address, the committed seed, the provider id, and j, reduced modulo
+    /// the snapshot's leaf count. The provider id stops one proof from serving two
+    /// providers; the instance address stops it from serving two instances that
+    /// happen to share a seed. Public so operators can precompute their reveals.
+    /// Callers must ensure leafCount > 0.
+    function custodyIndex(bytes32 seed, uint64 providerId, uint64 j, uint64 leafCount)
+        public
+        view
+        returns (uint64)
+    {
+        return uint64(
+            uint256(keccak256(abi.encodePacked(bytes1(0x04), address(this), seed, providerId, j)))
+                % leafCount
+        );
+    }
+
+    /// Open the current period's proof window: snapshot the randomness seed and the
+    /// dataset state. The FIRST commit of a period is binding — the seed can never be
+    /// re-rolled — but a leftover commit from an earlier, already-missed period is
+    /// simply overwritten.
+    function beginProof(uint64 providerId) external {
+        Provider storage p = _provider(providerId);
+        if (msg.sender != p.operator) revert NotOperator(providerId);
+        if (p.status != ProviderStatus.ACTIVE) revert NotActive(providerId);
+        uint64 period = custodyPeriodIndex(providerId);
+        if (p.commitPeriodPlusOne != 0 && p.commitPeriodPlusOne - 1 == period) {
+            revert AlreadyCommitted(period);
+        }
+        p.commitPeriodPlusOne = period + 1;
+        p.commitSeed = bytes32(block.prevrandao);
+        p.commitRoot = MMR.bagRoot(leafCount, peaks);
+        p.commitLeafCount = leafCount;
+        emit CustodyCommitted(providerId, period, p.commitSeed, p.commitRoot, p.commitLeafCount);
+    }
+
+    /// Prove the committed period with a succinct proof. Must land in the same period
+    /// as its commit — a commit whose period has passed is worthless and the period
+    /// is simply missed.
+    function submitProof(uint64 providerId, bytes calldata proof) external {
+        Provider storage p = _provider(providerId);
+        uint64 period = _submitGuards(p, providerId);
+        try ISP1Verifier(SP1_VERIFIER).verifyProof(CUSTODY_VKEY, _custodyPublicValues(), proof) {}
+        catch {
+            revert InvalidCustodyProof();
+        }
+        _acceptProof(p, providerId, period, false);
+    }
+
+    /// The degraded path: reveal the raw chunks at the 32 contract-derived positions,
+    /// each with a Merkle inclusion proof against the committed snapshot (supplied as
+    /// calldata and re-bagged against the stored one-word pin). An empty snapshot is
+    /// vacuously proven with zero reveals — there is nothing to sample from nothing,
+    /// which keeps a provider who staked before the first declaration curable.
+    function submitProofEscape(
+        uint64 providerId,
+        uint64 n,
+        bytes32[] calldata pinnedPeaks,
+        ChunkProof[] calldata reveals
+    ) external {
+        Provider storage p = _provider(providerId);
+        uint64 period = _submitGuards(p, providerId);
+        bytes32[] memory peaksMem = pinnedPeaks;
+        if (n != p.commitLeafCount || MMR.bagRoot(n, peaksMem) != p.commitRoot) {
+            revert PinMismatch();
+        }
+        uint256 required = n == 0 ? 0 : maxSample;
+        if (reveals.length != required) revert ProofCountMismatch(required);
+        bytes32 seed = p.commitSeed;
+        for (uint64 j = 0; j < reveals.length; ++j) {
+            uint64 idx = custodyIndex(seed, providerId, j, n);
+            if (!MMR.verify(reveals[j].chunk, idx, reveals[j].path, n, peaksMem)) {
+                revert InvalidInclusionProof(j);
+            }
+        }
+        _acceptProof(p, providerId, period, true);
+    }
+
+    /// Shared submit guards; returns the current (== committed) period.
+    function _submitGuards(Provider storage p, uint64 providerId) private view returns (uint64) {
+        if (msg.sender != p.operator) revert NotOperator(providerId);
+        if (p.status != ProviderStatus.ACTIVE) revert NotActive(providerId);
+        if (p.commitPeriodPlusOne == 0) revert NoCommit();
+        uint64 committed = p.commitPeriodPlusOne - 1;
+        uint64 current = custodyPeriodIndex(providerId);
+        if (committed != current) revert CommitFromEarlierPeriod(committed, current);
+        return current;
+    }
+
+    /// An accepted proof (either path) marks the period proven and voids the commit.
+    function _acceptProof(Provider storage p, uint64 providerId, uint64 period, bool degraded)
+        private
+    {
+        p.lastProvenPlusOne = period + 1;
+        p.lastDegraded = degraded;
+        p.commitPeriodPlusOne = 0;
+        p.commitSeed = 0;
+        p.commitRoot = 0;
+        p.commitLeafCount = 0;
+        emit CustodyProven(providerId, period, degraded);
+    }
+
+    /// A provider's derived custody health. Never stored — computed from the period
+    /// arithmetic on demand. Meanings: CURRENT — no completed period unproven; STALE —
+    /// one completed period missed (informational); LAPSE_ELIGIBLE — two consecutive
+    /// misses, but inside the grace window where only the provider can act; LAPSABLE —
+    /// anyone may slash via lapse(). NONE — the provider is not ACTIVE (unbonding,
+    /// exited, slashed, or unknown ids have no custody obligations).
+    enum CustodyStatus {
+        NONE,
+        CURRENT,
+        STALE,
+        LAPSE_ELIGIBLE,
+        LAPSABLE
+    }
+
+    function custodyStatus(uint64 providerId) external view returns (CustodyStatus) {
+        Provider storage p = providers[providerId];
+        if (p.status != ProviderStatus.ACTIVE) return CustodyStatus.NONE;
+        uint64 period = uint64((block.timestamp - p.anchor) / custodyPeriod);
+        // q is the last proven period, one-off-stored so that 0 encodes "none yet".
+        if (period + 1 <= p.lastProvenPlusOne + 1) return CustodyStatus.CURRENT; // p <= q+1
+        if (period + 1 == p.lastProvenPlusOne + 2) return CustodyStatus.STALE; // p == q+2
+        // Two consecutive misses: the clock to public slashing started when the second
+        // missed period completed.
+        (, uint256 lapsableAt) = _lapseTimes(p);
+        return block.timestamp < lapsableAt ? CustodyStatus.LAPSE_ELIGIBLE : CustodyStatus.LAPSABLE;
+    }
+
+    /// Slash a provider who has missed two consecutive custody periods and let the
+    /// grace window pass uncured. Anyone may call; the bounty pays the caller and the
+    /// remainder is held for the future paymaster. An accepted proof at ANY point
+    /// before this executes resets the clock — cure always wins if it lands first.
+    function lapse(uint64 providerId) external {
+        Provider storage p = _provider(providerId);
+        // Unbonding and slashed providers are immune: their custody obligations ended.
+        if (p.status != ProviderStatus.ACTIVE) revert NotActive(providerId);
+        (uint256 eligibleAt, uint256 lapsableAt) = _lapseTimes(p);
+        if (block.timestamp < eligibleAt) revert NotLapsable(0); // not even two misses yet
+        if (block.timestamp < lapsableAt) revert NotLapsable(uint64(lapsableAt)); // grace
+
+        p.status = ProviderStatus.SLASHED;
+        uint256 bounty = (stakeWei * bountyBps) / 10_000;
+        // Remainder held pending the paymaster (see pendingSlashRemainders TODO).
+        pendingSlashRemainders += stakeWei - bounty;
+        emit Slashed(providerId, SlashCause.LAPSE, msg.sender);
+        _payout(msg.sender, bounty);
+    }
+
+    /// The two lapse thresholds: eligibility opens the instant the second consecutive
+    /// missed period completes (anchor + (lastProven + 3) whole periods), and public
+    /// slashability follows one grace window later. uint256 math so absurd constructor
+    /// parameters cannot overflow the products.
+    function _lapseTimes(Provider storage p)
+        private
+        view
+        returns (uint256 eligibleAt, uint256 lapsableAt)
+    {
+        // lastProvenPlusOne stores q+1, so q+3 whole periods is lastProvenPlusOne + 2.
+        eligibleAt = uint256(p.anchor) + (uint256(p.lastProvenPlusOne) + 2) * uint256(custodyPeriod);
+        lapsableAt = eligibleAt + lapseGrace;
+    }
+
+    /// The custody circuit's public-input byte layout is deliberately not yet
+    /// specified, and inventing one is forbidden — a silent guess becomes permanent.
+    /// Until the circuit spec is written this returns empty bytes and the mock
+    /// verifier validates only (vkey, proof).
+    /// TODO(spec): encode the custody statement's public values exactly as specified
+    /// (they bind instance, providerId, seed, root, leafCount, and the sample count).
+    /// This function body is the only place that changes; no call site moves.
+    function _custodyPublicValues() private pure returns (bytes memory) {
+        return "";
     }
 
     // ---------------------------------------------------------------------------
