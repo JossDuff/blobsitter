@@ -20,6 +20,10 @@ abstract contract PayoutSink {
 
     /// Balances a failed push parked here; claim() drains the caller's entry.
     mapping(address => uint256) public claimable;
+    /// Sum of all parked balances: ETH that is already spoken for. Anything that
+    /// spends from the contract's balance (reimbursement checks, dormancy sweeps)
+    /// must treat only balance − totalClaimable as available.
+    uint256 public totalClaimable;
 
     /// Drain the caller's parked balance. A failing transfer reverts (state restored)
     /// and can be retried later.
@@ -27,6 +31,7 @@ abstract contract PayoutSink {
         uint256 amount = claimable[msg.sender];
         if (amount == 0) revert NothingClaimable();
         claimable[msg.sender] = 0;
+        totalClaimable -= amount;
         (bool ok,) = msg.sender.call{value: amount, gas: PAYOUT_GAS_STIPEND}("");
         if (!ok) revert PayoutFailed();
         emit Claimed(msg.sender, amount);
@@ -38,6 +43,7 @@ abstract contract PayoutSink {
         (bool ok,) = to.call{value: amount, gas: PAYOUT_GAS_STIPEND}("");
         if (!ok) {
             claimable[to] += amount;
+            totalClaimable += amount;
             emit PayoutDeferred(to, amount);
         }
     }
