@@ -5,6 +5,34 @@ import {BlobsitterInstance} from "src/BlobsitterInstance.sol";
 import {InstanceTestBase} from "test/helpers/InstanceTestBase.sol";
 import {TestVec} from "test/helpers/TestVec.sol";
 
+/// A challenger contract whose ETH acceptance can be toggled: exercises the
+/// pull-fallback on the timeout payout (bounty + bond deferred into the claimable
+/// ledger when the push fails).
+contract RejectingChallenger {
+    BlobsitterInstance internal immutable instance;
+    bool public accepting;
+
+    constructor(BlobsitterInstance instance_) {
+        instance = instance_;
+    }
+
+    function setAccepting(bool v) external {
+        accepting = v;
+    }
+
+    function open(uint64 providerId, uint64[] calldata indices) external payable returns (uint64) {
+        return instance.challenge{value: msg.value}(providerId, indices);
+    }
+
+    function doClaim() external {
+        instance.claim();
+    }
+
+    receive() external payable {
+        require(accepting, "no");
+    }
+}
+
 /// The challenge game: open → answer / timeout, pinning, window boundaries, and
 /// selector-matched negatives for every challenge-path error the instance defines.
 contract ChallengeTest is InstanceTestBase {
@@ -293,7 +321,7 @@ contract ChallengeTest is InstanceTestBase {
         uint256 bounty = (2 ether * 1500) / 10_000;
         assertEq(CHALLENGER.balance, 100 ether + bounty, "both bonds back + one bounty");
         assertEq(instance.getProvider(pid).openChallenges, 0);
-        assertEq(bondEach > 0, true, "bond was nonzero under vm.fee");
+        assertGt(bondEach, 0, "bond was nonzero under vm.fee");
     }
 
     // ------------------------------------------------- unbonding pins & admission
@@ -368,6 +396,47 @@ contract ChallengeTest is InstanceTestBase {
         _respond(id, _one(3), 13);
         instance.withdraw(pid);
         assertEq(WITHDRAWAL.balance, 2 ether, "exit completes after the answer");
+    }
+
+    /// A provider over an empty dataset is effectively unchallengeable: with a pinned
+    /// leaf count of zero there is no admissible index, so nothing can be sampled
+    /// (consistent with there being nothing to custody yet).
+    function test_challenge_emptyDatasetUnchallengeable() public {
+        BlobsitterInstance fresh = new BlobsitterInstance(_params());
+        uint64 id = fresh.stake{value: 2 ether}(OPERATOR, WITHDRAWAL);
+
+        vm.expectRevert(BlobsitterInstance.NoIndices.selector);
+        fresh.challenge{value: _requiredBond(1)}(id, new uint64[](0));
+
+        vm.expectRevert(abi.encodeWithSelector(BlobsitterInstance.IndexOutOfRange.selector, 0, 0));
+        fresh.challenge{value: _requiredBond(1)}(id, _one(0));
+    }
+
+    /// A challenger contract that rejects ETH still resolves cleanly: the timeout
+    /// payout (bounty + bond) defers into the claimable ledger instead of reverting
+    /// the slash, and the challenger collects later via claim().
+    function test_resolveTimeout_rejectingChallengerDefersPayout() public {
+        RejectingChallenger challenger = new RejectingChallenger(instance);
+        vm.deal(address(challenger), 1 ether);
+        uint256 bond = _requiredBond(1);
+        uint64 id = challenger.open{value: bond}(pid, _one(2));
+
+        vm.warp(block.timestamp + 7 days);
+        instance.resolveTimeout(id); // slash succeeds despite the unpayable challenger
+
+        uint256 bounty = (2 ether * 1500) / 10_000;
+        assertEq(instance.claimable(address(challenger)), bounty + bond, "payout deferred in full");
+        assertEq(
+            uint8(instance.getProvider(pid).status),
+            uint8(BlobsitterInstance.ProviderStatus.SLASHED),
+            "slash not blocked by the failed push"
+        );
+
+        challenger.setAccepting(true);
+        challenger.doClaim();
+        // The bond was funded by this test's call value, so the challenger contract
+        // nets the full bounty + bond on top of its own untouched balance.
+        assertEq(address(challenger).balance, 1 ether + bounty + bond, "collected");
     }
 
     function _one(uint64 i) internal pure returns (uint64[] memory idx) {
