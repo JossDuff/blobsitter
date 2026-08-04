@@ -391,7 +391,9 @@ Challenge {
   openedAt      uint64
   pinnedRoot    bytes32    # Root(n,peaks) at open — or the provider's exitRoot
   pinnedLeafCount uint64
-  indicesHash   bytes32    # keccak256(abi.encodePacked(uint64[] indices))
+  indicesHash   bytes32    # keccak256(abi.encodePacked(uint64[] indices)) — NB Solidity
+                           # packed encoding pads ARRAY elements to 32-byte words; off-chain
+                           # tooling MUST hash the padded words, not tight 8-byte values
   k             uint16
   resolved      bool
 }
@@ -715,6 +717,11 @@ credit `claimable[recipient]` and emit; `claim()` pays the accumulated balance o
 (same gas cap; a failing `claim()` reverts and can be retried). Claimable balances are
 outside the token bucket and survive indefinitely. No payout path can revert the
 operation that triggered it.
+
+*Non-normative recipient guidance:* any payout recipient — withdrawal addresses above
+all — must either accept a plain ETH transfer within the 50_000-gas stipend or be able
+to issue a `claim()` call. A contract recipient that can do neither strands its own
+funds in the claimable ledger forever; the protocol makes no provision to redirect them.
 
 ## 16. Error taxonomy
 
