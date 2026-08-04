@@ -756,7 +756,8 @@ OpenChallengesRemain(uint32 count)   withdraw while challenges unresolved
 
 **Challenges (§12.5, §13.2)**
 ```
-ChallengeWindowClosed()              open attempt after unbonding-delay expiry
+ChallengeWindowClosed()              provider no longer challengeable: UNBONDING past
+                                     the unbonding-delay expiry, EXITED, or SLASHED
 NoIndices() / TooManyIndices(uint16 max)
 IndexOutOfRange(uint64 index, uint64 leafCount)
 BondTooSmall(uint256 required)
@@ -765,6 +766,7 @@ AlreadyResolved(uint64 challengeId)
 ResponseWindowClosed(uint64 deadline)    respond at now ≥ deadline
 ResponseWindowStillOpen(uint64 deadline) resolveTimeout at now < deadline
 IndicesMismatch()                    supplied indices don't hash to indicesHash
+ProofCountMismatch(uint256 expected) respond proofs array length ≠ challenge index count
 PinMismatch()                        supplied (n, peaks) don't re-bag to the pinned root
 InvalidInclusionProof(uint256 sampleIndex)
 ProviderSlashed(uint64 providerId)   respond attempted after slash
