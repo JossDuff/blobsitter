@@ -788,6 +788,7 @@ OnlyInstance()
 NotDormant(uint64 dormantAt)
 NothingToReclaim()
 NothingClaimable()
+PayoutFailed()                       claim() transfer failed (state restored; retriable)
 ```
 
 Rule of construction: every MUST in §11–§15 maps to exactly one error above; a new guard
