@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {MMR} from "./libraries/MMR.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
+import {PayoutSink} from "./PayoutSink.sol";
 
 /// Minimal ERC-1271 surface the instance needs to verify publisher intent signatures.
 interface IERC1271 {
@@ -22,7 +23,7 @@ interface IERC1271 {
 /// custody proofs (commit/prove/escape/lapse), and the push-with-pull-fallback payout
 /// pattern are implemented. The paymaster is milestone 4 — its reimbursement hook is a
 /// documented no-op and slash remainders accumulate in pendingSlashRemainders until then.
-contract BlobsitterInstance {
+contract BlobsitterInstance is PayoutSink {
     // ---------------------------------------------------------------------------
     // Errors (publication subset). Names and argument types are fixed by the normative
     // spec; tests match on exact selectors.
@@ -40,8 +41,6 @@ contract BlobsitterInstance {
     error PointEvaluationFailed(uint256 blobIndex);
     error InvalidEquivalenceProof();
     error SuccessorAlreadySet();
-    error NothingClaimable();
-    error PayoutFailed();
     error WrongStakeAmount(uint256 expected);
     error UnknownProvider(uint64 providerId);
     error NotOperator(uint64 providerId);
@@ -83,8 +82,6 @@ contract BlobsitterInstance {
     );
     event AppPointerSet(uint64 indexed nonce, bytes32 pointer);
     event SuccessorSet(address target);
-    event PayoutDeferred(address indexed recipient, uint256 amount);
-    event Claimed(address indexed recipient, uint256 amount);
     event Staked(uint64 indexed providerId, address operator, address withdrawal);
     event UnbondingInitiated(uint64 indexed providerId, bytes32 exitRoot, uint64 exitLeafCount);
     event Withdrawn(uint64 indexed providerId);
@@ -211,8 +208,6 @@ contract BlobsitterInstance {
     // Declarations that grow the MMR by enough chunks restart the clock (see declareFor).
     uint64 public activityCheckpointTime;
     uint64 public activityCheckpointLeafCount;
-    /// Pull-fallback ledger: balances of failed pushes park here; claim() drains.
-    mapping(address => uint256) public claimable;
 
     // ---------------------------------------------------------------------------
     // Provider state.
@@ -906,36 +901,6 @@ contract BlobsitterInstance {
     function _challenge(uint64 challengeId) internal view returns (Challenge storage c) {
         c = challengeRecords[challengeId];
         if (c.challenger == address(0)) revert UnknownChallenge(challengeId);
-    }
-
-    // ---------------------------------------------------------------------------
-    // Payouts: push with pull fallback. Every ETH payout in the system uses this one
-    // pattern; no payout path can revert the operation that triggered it.
-    // ---------------------------------------------------------------------------
-
-    /// Push stipend: enough gas for a multisig receive, too little for reentrancy
-    /// mischief under checks-effects-interactions ordering.
-    uint256 private constant PAYOUT_GAS_STIPEND = 50_000;
-
-    /// Drain the caller's pull-fallback balance. A failing transfer reverts (state
-    /// restored) and can be retried later.
-    function claim() external {
-        uint256 amount = claimable[msg.sender];
-        if (amount == 0) revert NothingClaimable();
-        claimable[msg.sender] = 0;
-        (bool ok,) = msg.sender.call{value: amount, gas: PAYOUT_GAS_STIPEND}("");
-        if (!ok) revert PayoutFailed();
-        emit Claimed(msg.sender, amount);
-    }
-
-    /// Push `amount` to `to`; on any failure park it in the claimable ledger instead.
-    /// Callers MUST finish all state changes first (CEI).
-    function _payout(address to, uint256 amount) internal {
-        (bool ok,) = to.call{value: amount, gas: PAYOUT_GAS_STIPEND}("");
-        if (!ok) {
-            claimable[to] += amount;
-            emit PayoutDeferred(to, amount);
-        }
     }
 
     // ---------------------------------------------------------------------------
