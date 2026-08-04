@@ -39,6 +39,22 @@ library TestVec {
         }
     }
 
+    /// Inclusion proof for pattern leaf `i` at leaf count `n` (§7): the sibling hash at
+    /// every level from the leaf up to its covering peak, bottom level first. Mirrors
+    /// `reference::testvec::prove`.
+    function prove(uint64 i, uint64 n) internal pure returns (uint256 k, bytes32[] memory path) {
+        uint64 start;
+        uint8 h;
+        (k, start, h) = MMR.locate(i, n);
+        uint64 off = i - start;
+        path = new bytes32[](h);
+        for (uint8 lvl = 0; lvl < h; ++lvl) {
+            uint64 width = uint64(1) << lvl;
+            uint64 sibOff = (off >> lvl) ^ 1;
+            path[lvl] = subtreeRoot(start + sibOff * width, lvl);
+        }
+    }
+
     /// Canonical peaks over the first n pattern chunks, built leaf by leaf — the slow,
     /// obviously-correct construction batched updates are checked against.
     function buildPeaks(uint64 n) internal pure returns (bytes32[] memory peaks, uint64 cnt) {
