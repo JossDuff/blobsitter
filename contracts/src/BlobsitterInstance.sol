@@ -18,10 +18,11 @@ interface IERC1271 {
 /// pausing. The publisher never holds or spends ETH — every publisher action arrives as
 /// an EIP-712-signed intent carried by an arbitrary EOA and verified via ERC-1271.
 ///
-/// Milestone scope: this file currently implements the publication core (§12.3) —
-/// declareFor, setAppPointer, setSuccessor. Provider lifecycle (§12.4), challenges
-/// (§12.5), custody proofs (§12.6), and the paymaster (§15) land in later milestones;
-/// the paymaster reimbursement hook is a documented no-op until then.
+/// Milestone scope: publication core (§12.3), provider lifecycle (§12.4), challenges
+/// (§12.5), and the §15.5 payout pattern are implemented. Custody proofs (§12.6) are
+/// milestone 3; the paymaster (§15) is milestone 4 — its reimbursement hook is a
+/// documented no-op and slash remainders accumulate in pendingSlashRemainders until
+/// then.
 contract BlobsitterInstance {
     // ---------------------------------------------------------------------------
     // §16 errors (publication subset). Identity is normative; tests match selectors.
