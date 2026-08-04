@@ -39,6 +39,8 @@ contract BlobsitterInstance {
     error PointEvaluationFailed(uint256 blobIndex);
     error InvalidEquivalenceProof();
     error SuccessorAlreadySet();
+    error NothingClaimable();
+    error PayoutFailed();
 
     // ---------------------------------------------------------------------------
     // §12.8 events (publication subset) — the daemon's contract surface.
@@ -53,6 +55,8 @@ contract BlobsitterInstance {
     );
     event AppPointerSet(uint64 indexed nonce, bytes32 pointer);
     event SuccessorSet(address target);
+    event PayoutDeferred(address indexed recipient, uint256 amount);
+    event Claimed(address indexed recipient, uint256 amount);
 
     // ---------------------------------------------------------------------------
     // §11 EIP-712. Typehash strings are exact and single-line (§11.2 wraps them for
@@ -157,6 +161,8 @@ contract BlobsitterInstance {
     address public successor; // write-once; protocol-inert (never interpreted)
     uint64 public activityCheckpointTime; // §12.7
     uint64 public activityCheckpointLeafCount;
+    /// §15.5 pull-fallback ledger: balances a failed push parked here; claim() drains.
+    mapping(address => uint256) public claimable;
 
     constructor(Params memory p) {
         publisher = p.publisher;
@@ -373,6 +379,36 @@ contract BlobsitterInstance {
         successor = target;
         emit SuccessorSet(target);
         _reimburse(msg.sender, 0, false);
+    }
+
+    // ---------------------------------------------------------------------------
+    // §15.5 payouts: push with pull fallback. Every ETH payout in the system uses
+    // this one pattern; no payout path can revert the operation that triggered it.
+    // ---------------------------------------------------------------------------
+
+    /// Push stipend: enough for a multisig receive, too little for reentrancy
+    /// mischief under CEI ordering (§15.5).
+    uint256 private constant PAYOUT_GAS_STIPEND = 50_000;
+
+    /// Drain the caller's pull-fallback balance. A failing transfer reverts (state
+    /// restored) and can be retried later.
+    function claim() external {
+        uint256 amount = claimable[msg.sender];
+        if (amount == 0) revert NothingClaimable();
+        claimable[msg.sender] = 0;
+        (bool ok,) = msg.sender.call{value: amount, gas: PAYOUT_GAS_STIPEND}("");
+        if (!ok) revert PayoutFailed();
+        emit Claimed(msg.sender, amount);
+    }
+
+    /// Push `amount` to `to`; on any failure park it in the claimable ledger instead.
+    /// Callers MUST finish all state changes first (CEI).
+    function _payout(address to, uint256 amount) internal {
+        (bool ok,) = to.call{value: amount, gas: PAYOUT_GAS_STIPEND}("");
+        if (!ok) {
+            claimable[to] += amount;
+            emit PayoutDeferred(to, amount);
+        }
     }
 
     // ---------------------------------------------------------------------------
