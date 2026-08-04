@@ -749,6 +749,8 @@ IntentExpired(uint64 deadline)       block.timestamp > deadline
 NotDesignatedCarrier(address want)   designatedCarrier set and ≠ msg.sender
 NotOperator(uint64 providerId)       caller ≠ provider.operator
 ZeroAddress()                        operator/withdrawal/successor target is zero
+Reentered()                          publication entrypoint reentered (e.g. from within
+                                     the carrier-reimbursement push)
 ```
 
 **Declarations (§12.3)**
