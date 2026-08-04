@@ -168,7 +168,7 @@ contract PaymasterTest is Test {
 
     /// All-or-nothing, balance side: a funded bucket cannot spend money that isn't
     /// there — and parked claimable ETH is not "there".
-    function test_balance_allOrNothing() public {
+    function test_I20_balance_allOrNothing() public {
         _donate(DONOR_A, 0.4 ether);
         stub.doReimburse(CARRIER, 0.5 ether, true); // bucket fine, balance short
         assertEq(CARRIER.balance, 0, "skipped");
@@ -255,7 +255,7 @@ contract PaymasterTest is Test {
 
     /// A reclaimer that refuses the push gets parked, not blocked — and the parked
     /// amount is excluded from later reclaimers' math.
-    function test_reclaim_deferredPayout() public {
+    function test_I20_reclaim_deferredPayout() public {
         MoodyActor moody = new MoodyActor(pm);
         vm.deal(address(this), 100 ether);
         moody.donate{value: 2 ether}();
