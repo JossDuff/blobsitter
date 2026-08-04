@@ -121,6 +121,47 @@ library MMR {
         newCount = cnt;
     }
 
+    /// §7.1: locate the peak whose perfect subtree covers leaf `i` at leaf count `n`.
+    /// Returns (peak index in canonical order, subtree's first leaf index, peak height).
+    /// Callers MUST ensure `i < n` (the §7.2 wrapper checks it).
+    function locate(uint64 i, uint64 n) internal pure returns (uint256 k, uint64 start, uint8 h) {
+        for (uint256 height = 64; height > 0;) {
+            unchecked {
+                --height;
+            }
+            if ((n >> height) & 1 == 0) continue;
+            uint64 size = uint64(1) << height;
+            if (i < start + size) return (k, start, uint8(height));
+            unchecked {
+                start += size;
+                ++k;
+            }
+        }
+        assert(false); // unreachable while i < n: the peaks cover all n leaves
+    }
+
+    /// §7.2: inclusion-proof verification against stored peaks — the exact check the
+    /// contract runs for challenge responses (and the custody escape hatch in M3). The
+    /// possession-evidencing element is the raw chunk: it is hashed before the climb.
+    /// SNARK-free by construction and MUST remain so (CLAUDE.md invariant 4).
+    function verify(
+        bytes31 chunk,
+        uint64 i,
+        bytes32[] memory path,
+        uint64 n,
+        bytes32[] memory peaks
+    ) internal pure returns (bool) {
+        if (i >= n || peaks.length != peakCount(n)) return false;
+        (uint256 k, uint64 start, uint8 h) = locate(i, n);
+        if (path.length != h) return false;
+        uint64 off = i - start;
+        bytes32 acc = leafHash(chunk);
+        for (uint256 lvl = 0; lvl < h; ++lvl) {
+            acc = (off >> lvl) & 1 == 0 ? nodeHash(acc, path[lvl]) : nodeHash(path[lvl], acc);
+        }
+        return acc == peaks[k];
+    }
+
     /// count_trailing_zero_bits for x != 0.
     function _ctz(uint64 x) private pure returns (uint8 c) {
         while (x & 1 == 0) {

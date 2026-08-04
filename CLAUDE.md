@@ -49,6 +49,11 @@ and bonded storage providers accountable via challenges and slashing.
 - `cargo build -p blobsitter-reference --bin mmr_oracle && (cd contracts && forge test)` —
   the contract suite (vector conformance, negatives, invariants). The oracle build comes
   first: the I12 differential fuzz test calls it via `vm.ffi`.
+- `cargo run -p kzg-fixture` — regenerate `contracts/test/fixtures/kzg_opening.json`
+  (real c-kzg opening; CI fails if the committed fixture doesn't match). Never hand-edit.
+- `ETH_RPC_URL=<url> forge test --match-path "test/fork/*"` (from `contracts/`) — the
+  Layer-4 mainnet-fork tests (precompile parity, real-Safe ERC-1271). They self-skip
+  without the URL; CI runs them once the `ETH_RPC_URL` repo secret is configured.
 
 ## Layout
 
@@ -57,8 +62,11 @@ and bonded storage providers accountable via challenges and slashing.
 - `scripts/gen_vectors.py` — vector generator (interim; Rust reference will take over).
 - `reference/` — Rust reference implementation of normative §1–10 + §11 EIP-712 digests;
   `src/bin/mmr_oracle.rs` is the forge suite's ffi differential oracle.
-- `contracts/` — Foundry project: the instance template (publication core as of
-  milestone 1; challenges/custody/paymaster are later milestones) + mocks and tests.
+- `contracts/` — Foundry project: the instance template (publication core, provider
+  lifecycle, and challenges as of milestone 2; custody is M3, paymaster M4) + mocks,
+  tests, and generated fixtures (`test/fixtures/`, never hand-edited).
+- `tools/kzg-fixture/` — generates the real-KZG test fixture from c-kzg's embedded
+  Ethereum setup (no ceremony is ever run by or for this protocol).
 - Planned: `circuits/` (SP1), `daemon/`, `carrier/`, `publisher/`.
 
 ## Working rules
