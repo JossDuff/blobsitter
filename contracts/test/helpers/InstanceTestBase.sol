@@ -100,9 +100,31 @@ abstract contract InstanceTestBase is Test {
 
     /// Sign and submit a well-formed declaration of m chunks; returns the declaration.
     function _declare(uint64 m) internal returns (BlobsitterInstance.Declaration memory d) {
-        BlobsitterInstance.BlobOpening[] memory o;
-        (d, o) = _makeDeclaration(m, bytes32(0), address(0));
+        return _declareOn(instance, m);
+    }
+
+    /// Same, against an arbitrary instance (fixture/fork instances at pinned addresses).
+    function _declareOn(BlobsitterInstance inst, uint64 m)
+        internal
+        returns (BlobsitterInstance.Declaration memory d)
+    {
+        uint64 n0 = inst.leafCount();
+        uint256 blobCount = (uint256(m) + 4095) / 4096;
+        d.nonce = inst.declarationNonce();
+        d.deadline = uint64(block.timestamp + 1 hours);
+        d.blobVersionedHashes = new bytes32[](blobCount);
+        BlobsitterInstance.BlobOpening[] memory o = new BlobsitterInstance.BlobOpening[](blobCount);
+        for (uint256 j = 0; j < blobCount; ++j) {
+            d.blobVersionedHashes[j] = zeroBlobVh;
+            o[j] = BlobsitterInstance.BlobOpening({
+                y: bytes32(0),
+                commitment: INFINITY_G1,
+                kzgProof: INFINITY_G1
+            });
+        }
+        d.newSubtreePeaks = TestVec.subtreePeaks(n0, m);
+        d.newLeafCount = n0 + m;
         vm.blobhashes(d.blobVersionedHashes);
-        instance.declareFor(d, _sign(instance.declarationDigest(d)), o, goodProof);
+        inst.declareFor(d, _sign(inst.declarationDigest(d)), o, goodProof);
     }
 }

@@ -1,0 +1,16 @@
+[package]
+name = "kzg-fixture"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Generates the real-KZG opening fixture for the forge suite (test-plan Layer 4)"
+
+[dependencies]
+blobsitter-reference = { path = "../../reference" }
+# Ethereum's c-kzg-4844 binding with the EMBEDDED mainnet trusted setup — no ceremony
+# is ever run by or for this protocol (CLAUDE.md invariant 9); this consumes the
+# pre-existing public KZG setup exactly like the EL clients do.
+c-kzg = { version = "2", features = ["ethereum_kzg_settings"] }
+# versioned hash = 0x01 ‖ sha256(commitment)[1:]
+sha2 = "0.10"
+serde_json = "1"
