@@ -4,7 +4,8 @@ pragma solidity 0.8.28;
 import {BlobsitterInstance} from "src/BlobsitterInstance.sol";
 import {InstanceTestBase} from "test/helpers/InstanceTestBase.sol";
 
-/// A withdrawal wallet that can refuse ETH — exercises the §15.5 fallback on withdraw.
+/// A withdrawal wallet that can refuse ETH — exercises the push-with-pull-fallback
+/// payout path on withdraw.
 contract PickyWallet {
     bool public accepting;
 
@@ -17,8 +18,9 @@ contract PickyWallet {
     }
 }
 
-/// §12.4 provider lifecycle + §13.1 boundaries: stake / initiateUnbonding / withdraw /
-/// announce / retract, with selector-matched negatives for the staking & exit errors.
+/// Provider lifecycle and its state-machine boundaries: stake / initiateUnbonding /
+/// withdraw / announce / retract, with selector-matched negatives for the staking &
+/// exit errors.
 contract ProviderTest is InstanceTestBase {
     address internal constant OPERATOR = address(0x0101);
     address internal constant WITHDRAWAL = address(0x0202);
@@ -113,7 +115,8 @@ contract ProviderTest is InstanceTestBase {
         instance.initiateUnbonding(id);
         uint64 until = uint64(block.timestamp) + uint64(14 days);
 
-        // §13: consequence available at now >= deadline, not before.
+        // Half-open window: withdrawal becomes available exactly at the deadline,
+        // never a second before.
         vm.warp(until - 1);
         vm.expectRevert(
             abi.encodeWithSelector(BlobsitterInstance.UnbondingDelayActive.selector, until)
@@ -144,7 +147,7 @@ contract ProviderTest is InstanceTestBase {
     }
 
     /// A refusing withdrawal wallet defers the stake into the claimable ledger — the
-    /// withdraw operation itself never reverts (§15.5).
+    /// withdraw operation itself never reverts on a failed push.
     function test_withdraw_pullFallback() public {
         PickyWallet wallet_ = new PickyWallet();
         uint64 id = instance.stake{value: 2 ether}(OPERATOR, address(wallet_));

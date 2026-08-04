@@ -6,8 +6,8 @@ import {stdJson} from "forge-std/StdJson.sol";
 import {MMR} from "src/libraries/MMR.sol";
 import {TestVec} from "test/helpers/TestVec.sol";
 
-/// vectors/inclusion_proofs.json conformance (§7.2) — the exact verification the
-/// challenge-response path runs — plus the Layer-3 "verifier that accepts everything"
+/// vectors/inclusion_proofs.json conformance — the exact peak-based verification the
+/// challenge-response path runs — plus the negative "verifier that accepts everything"
 /// traps: a verifier must reject wrong chunks, wrong indices, and wrong-length paths,
 /// or every positive assertion above it is worthless.
 contract InclusionTest is Test {
@@ -47,7 +47,7 @@ contract InclusionTest is Test {
             }
             assertFalse(MMR.verify(chunk, idx, padded, n, peaks), "wrong path length accepted");
             // NB: verify() alone cannot reject every wrong n — (n, peaks) are jointly
-            // authenticated upstream by re-bagging against the pinned Root (§12.2), so
+            // authenticated upstream by re-bagging against the pinned root commitment, so
             // the structural check here is only the peak-count/geometry one:
             assertFalse(MMR.verify(chunk, idx, path, 15, peaks), "peak-count mismatch accepted");
             ++i;

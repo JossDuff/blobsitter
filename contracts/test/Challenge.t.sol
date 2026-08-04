@@ -5,8 +5,8 @@ import {BlobsitterInstance} from "src/BlobsitterInstance.sol";
 import {InstanceTestBase} from "test/helpers/InstanceTestBase.sol";
 import {TestVec} from "test/helpers/TestVec.sol";
 
-/// §12.5 / §13.2 challenge game: open → answer / timeout, pinning, boundaries, and
-/// selector-matched negatives for the whole §16 challenge group.
+/// The challenge game: open → answer / timeout, pinning, window boundaries, and
+/// selector-matched negatives for every challenge-path error the instance defines.
 contract ChallengeTest is InstanceTestBase {
     address internal constant OPERATOR = address(0x0101);
     address internal constant WITHDRAWAL = address(0x0202);
@@ -18,13 +18,15 @@ contract ChallengeTest is InstanceTestBase {
         super.setUp();
         vm.deal(address(this), 100 ether);
         vm.deal(CHALLENGER, 100 ether);
-        vm.fee(10 gwei); // §12.5 bond sizing is basefee-denominated
+        vm.fee(10 gwei); // challenger-bond sizing is basefee-denominated
         _declare(13);
         pid = instance.stake{value: 2 ether}(OPERATOR, WITHDRAWAL);
     }
 
-    /// §12.5 bond floor. Deliberately no external calls: a view call into the instance
-    /// here would consume a pending vm.prank/vm.expectRevert at the call sites.
+    /// The challenger-bond floor: three times the estimated response gas (a fixed
+    /// per-index verification cost plus the 21k base) at the current basefee.
+    /// Deliberately no external calls: a view call into the instance here would
+    /// consume a pending vm.prank/vm.expectRevert at the call sites.
     function _requiredBond(uint256 k) internal view returns (uint256) {
         return 3 * (k * 38_680 + 21_000) * block.basefee;
     }
@@ -103,7 +105,8 @@ contract ChallengeTest is InstanceTestBase {
         instance.challenge{value: required - 1}(pid, idx);
     }
 
-    /// Duplicate indices are admitted (§12.5) — they only waste the challenger's bond.
+    /// Duplicate indices are deliberately admitted — they only waste the challenger's
+    /// own bond, so the contract does not pay gas to deduplicate.
     function test_challenge_duplicateIndices() public {
         uint64[] memory dup = new uint64[](2);
         (dup[0], dup[1]) = (5, 5);
@@ -152,7 +155,7 @@ contract ChallengeTest is InstanceTestBase {
         uint64[] memory idx = _indices3();
         uint64 id = _open(idx);
 
-        vm.warp(t0 + 7 days - 1); // §13: open while now < deadline
+        vm.warp(t0 + 7 days - 1); // half-open window: responding works while now < deadline
         _respond(id, idx, 13);
 
         uint64 id2 = _open(idx); // opened at t0 + 7d − 1
@@ -194,7 +197,9 @@ contract ChallengeTest is InstanceTestBase {
         vm.expectRevert(BlobsitterInstance.IndicesMismatch.selector);
         instance.respond(id, other, 13, peaks, proofs);
 
-        // The §7.2 trap: right shape, wrong chunk at sample 1 — no partial credit.
+        // The inclusion-proof trap: a structurally valid proof carrying the wrong chunk
+        // at sample 1. Verification binds the chunk bytes themselves, and one bad
+        // sample fails the whole response — no partial credit.
         BlobsitterInstance.ChunkProof[] memory forged = _proofsFor(idx, 13);
         forged[1].chunk = TestVec.chunk(6);
         vm.prank(OPERATOR);
@@ -245,7 +250,7 @@ contract ChallengeTest is InstanceTestBase {
         );
         instance.resolveTimeout(id);
 
-        vm.warp(deadline); // §13: consequence available at now >= deadline
+        vm.warp(deadline); // the timeout consequence becomes available exactly at the deadline
         vm.expectEmit(address(instance));
         emit BlobsitterInstance.Slashed(
             pid, BlobsitterInstance.SlashCause.CHALLENGE_TIMEOUT, address(this)
@@ -313,8 +318,10 @@ contract ChallengeTest is InstanceTestBase {
         _respond(id, _one(12), 13);
     }
 
-    /// §13.1 exit-window boundary + terminal statuses (decision: ChallengeWindowClosed
-    /// for every no-longer-challengeable status).
+    /// Exit-window boundary and terminal statuses: an unbonding provider remains
+    /// challengeable while now < the exit deadline, and from the deadline on — as for
+    /// EXITED and SLASHED — every no-longer-challengeable status reverts with the one
+    /// shared ChallengeWindowClosed error.
     function test_challenge_windowClosed() public {
         vm.prank(OPERATOR);
         instance.initiateUnbonding(pid);

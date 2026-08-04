@@ -3,8 +3,9 @@ pragma solidity 0.8.28;
 
 /// Minimal ECDSA-backed ERC-1271 wallet for tests: valid iff the 65-byte (r ‖ s ‖ v)
 /// signature over the raw digest recovers to `owner`. The real publisher wallet is a
-/// Safe with its SafeMessage envelope — exercised on a fork in a later milestone
-/// (test-plan Layer 4); the instance-side check is identical either way (§11.3).
+/// Safe with its SafeMessage envelope — exercised against a real deployed Safe in the
+/// mainnet-fork tests; the instance-side check is identical either way: one ERC-1271
+/// isValidSignature staticcall on the EIP-712 digest, accepting only the magic value.
 contract ERC1271Wallet {
     address public immutable owner;
 

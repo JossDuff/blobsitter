@@ -5,9 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {BlobsitterInstance} from "src/BlobsitterInstance.sol";
 import {ERC1271Wallet} from "test/mocks/ERC1271Wallet.sol";
 
-/// setAppPointer / setSuccessor (§12.3): happy paths, the intent-deadline boundary
-/// (valid at now == deadline, expired after — §11.2), and selector-matched negatives
-/// for every §16 error these paths can raise.
+/// setAppPointer / setSuccessor intents: happy paths, the intent-deadline boundary
+/// (valid at now == deadline, expired after), and selector-matched negatives for
+/// every error these paths can raise.
 contract IntentsTest is Test {
     uint256 internal constant PUBLISHER_PK = 0xA11CE;
     address internal publisherOwner;
@@ -50,7 +50,8 @@ contract IntentsTest is Test {
         assertEq(instance.appPointer(), bytes32(0), "cleared");
     }
 
-    /// §11.2: submittable while block.timestamp <= deadline — valid at the boundary.
+    /// Intent deadlines are inclusive: submittable while block.timestamp <= deadline,
+    /// so still valid at the exact boundary and expired one second later.
     function test_setAppPointer_deadlineBoundary() public {
         bytes32 pointer = keccak256("pointer");
         uint64 deadline = uint64(block.timestamp);
@@ -114,7 +115,7 @@ contract IntentsTest is Test {
         assertEq(instance.successorNonce(), 1, "nonce advanced");
     }
 
-    /// §12.3: successor is write-once.
+    /// The successor pointer is write-once: once set, it can never change again.
     function test_setSuccessor_alreadySet() public {
         test_setSuccessor();
         uint64 deadline = _deadline();
@@ -123,7 +124,8 @@ contract IntentsTest is Test {
         instance.setSuccessor(1, deadline, address(0xD00D), sig);
     }
 
-    /// §12.3: target ≠ 0.
+    /// The zero address is rejected as a successor target — writing it would burn the
+    /// one-shot pointer on a meaningless value.
     function test_setSuccessor_zeroAddress() public {
         uint64 deadline = _deadline();
         bytes memory sig = _sign(instance.setSuccessorDigest(0, deadline, address(0)));
@@ -145,7 +147,7 @@ contract IntentsTest is Test {
         instance.setSuccessor(1, deadline, address(0x5AFE), sig);
     }
 
-    /// The two intent nonce spaces are independent of each other (§11.2): consuming
+    /// Each intent type has its own nonce space, independent of the others: consuming
     /// appPointer nonces never advances the successor space.
     function test_nonceSpacesIndependent() public {
         test_setAppPointer(); // appPointerNonce -> 2

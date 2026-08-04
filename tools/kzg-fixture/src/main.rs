@@ -1,6 +1,6 @@
 //! Generates `contracts/test/fixtures/kzg_opening.json`: a REAL KZG opening for a real
-//! §4 pattern blob, verifiable by the EIP-4844 point-evaluation precompile at the §8
-//! Fiat–Shamir point the instance computes on-chain.
+//! blob laid out per the normative chunk-to-blob mapping, verifiable by the EIP-4844
+//! point-evaluation precompile at the Fiat–Shamir point the instance computes on-chain.
 //!
 //! The fixture declaration appends m = 3 pattern chunks at prior leaf count n₀ = 5 (the
 //! fs_z.json shape) on the fixed dummy instance address the other vectors use. Because
@@ -28,8 +28,8 @@ fn hx(bytes: &[u8]) -> String {
 }
 
 fn main() {
-    // §4 blob mapping: local chunk u -> field element u, byte 0 zero, bytes 1..31 the
-    // chunk; trailing elements zero.
+    // Chunk-to-blob mapping: local chunk u -> field element u, byte 0 zero (so the
+    // element stays below the BLS modulus), bytes 1..31 the chunk; trailing elements zero.
     let mut blob_bytes = vec![0u8; 131_072];
     for u in 0..M {
         let chunk = testvec::chunk(N0 + u);
@@ -45,7 +45,8 @@ fn main() {
     let mut vh: Hash = Sha256::digest(commitment.to_bytes().as_slice()).into();
     vh[0] = 0x01;
 
-    // Publisher-side declaration pieces, then the §8 point the contract will compute.
+    // Publisher-side declaration pieces, then the Fiat–Shamir point the contract will
+    // compute on-chain.
     let prior_peaks = testvec::build(N0).peaks();
     let heights = decompose(N0, M);
     let mut subtrees = Vec::new();

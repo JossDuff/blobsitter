@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {BlobsitterInstance} from "src/BlobsitterInstance.sol";
 
-/// Harness exposing the internal §15.5 push for unit tests (the real callers —
+/// Harness exposing the internal payout push for unit tests (the real callers —
 /// withdraw, bond payouts, bounties — are exercised in Provider/Challenge tests).
 contract PayoutHarness is BlobsitterInstance {
     constructor(Params memory p) BlobsitterInstance(p) {}
@@ -52,8 +52,8 @@ contract GasGuzzler {
     }
 }
 
-/// §15.5: push with pull fallback, 50k stipend, claim() retriability, CEI under
-/// reentrancy.
+/// Payout mechanics: push with pull fallback, 50k stipend, claim() retriability, CEI
+/// under reentrancy.
 contract PayoutTest is Test {
     PayoutHarness internal harness;
     MoodyReceiver internal moody;

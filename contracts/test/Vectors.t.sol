@@ -7,9 +7,9 @@ import {BlobsitterInstance} from "src/BlobsitterInstance.sol";
 import {MMR} from "src/libraries/MMR.sol";
 import {TestVec} from "test/helpers/TestVec.sol";
 
-/// Golden-vector conformance: Solidity vs `vectors/*.json`, value for value (normative
-/// §10). A failure means this code and the vector generator disagree about the normative
-/// spec — investigate which is wrong; never "fix" a vector.
+/// Golden-vector conformance: Solidity vs `vectors/*.json`, value for value. A failure
+/// means this code and the vector generator disagree about the normative spec —
+/// investigate which is wrong; never "fix" a vector.
 contract VectorsTest is Test {
     using stdJson for string;
 
@@ -28,7 +28,8 @@ contract VectorsTest is Test {
         require(n > 0, "empty vector file");
     }
 
-    /// §1 anchor: guards against the classic SHA-3-instead-of-Keccak mixup.
+    /// Hash-primitive anchor: the protocol's hash is Ethereum's Keccak-256, and this
+    /// guards against the classic NIST-SHA-3-instead-of-Keccak mixup.
     function test_vectors_keccakSanity() public view {
         string memory json = _load("keccak_sanity.json");
         assertEq(keccak256(""), json.readBytes32(".keccak256_empty"), "empty keccak anchor");
@@ -39,7 +40,7 @@ contract VectorsTest is Test {
         assertEq(MMR.leafHash(TestVec.chunk(0)), json.readBytes32(".leaf_of_chunk_0"), "leaf hash");
     }
 
-    /// §5: peaks and bagged root for a spread of leaf counts, built leaf by leaf.
+    /// MMR shape: peaks and bagged root for a spread of leaf counts, built leaf by leaf.
     function test_vectors_mmrRoots() public view {
         string memory json = _load("mmr_roots.json");
         uint256 cases = _caseCount(json);
@@ -47,7 +48,7 @@ contract VectorsTest is Test {
             string memory key = _caseKey(i);
             uint64 n = uint64(json.readUint(string.concat(key, ".leafCount")));
             uint256[] memory heights = json.readUintArray(string.concat(key, ".peakHeights"));
-            // Peak heights are the set bits of n, tallest first (§5.2).
+            // Peak heights are the set bits of n, tallest first.
             assertEq(heights.length, MMR.peakCount(n), "peak count");
             for (uint256 k = 0; k < heights.length; ++k) {
                 assertEq((n >> heights[k]) & 1, 1, "height not a set bit");
@@ -60,8 +61,8 @@ contract VectorsTest is Test {
         }
     }
 
-    /// §6: decomposition height sequences, publisher-side subtree roots, and the merge —
-    /// the exact algorithm declareFor executes.
+    /// Append decomposition: the height sequence an update splits into, the publisher-side
+    /// subtree roots, and the peak merge — the exact algorithm declareFor executes.
     function test_vectors_appendDecomposition() public view {
         string memory json = _load("append_decomposition.json");
         uint256 cases = _caseCount(json);
@@ -106,8 +107,8 @@ contract VectorsTest is Test {
         }
     }
 
-    /// §8: the Fiat–Shamir evaluation point. z is instance-bound, so the instance is
-    /// deployed at the vector's dummy address.
+    /// The Fiat–Shamir evaluation point z. Its derivation hashes in the instance's own
+    /// address, so the instance is deployed at the vector's dummy address.
     function test_vectors_fsZ() public {
         string memory json = _load("fs_z.json");
         address at = json.readAddress(".instance");

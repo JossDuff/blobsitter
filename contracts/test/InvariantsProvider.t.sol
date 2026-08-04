@@ -228,7 +228,9 @@ contract ProviderHandler is CommonBase, StdUtils {
 
     // -------------------------------------------------------------------- helpers
 
-    /// I6: every observed transition must be in the §13.1 subset; terminal is terminal.
+    /// I6: every observed transition must be in the legal provider-lifecycle subset —
+    /// ACTIVE to UNBONDING or SLASHED, UNBONDING to EXITED or SLASHED — and the
+    /// terminal statuses (EXITED, SLASHED) never transition again.
     function _observe(uint64 id) internal {
         BlobsitterInstance.ProviderStatus was = lastStatus[id];
         BlobsitterInstance.ProviderStatus now_ = instance.getProvider(id).status;

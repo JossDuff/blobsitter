@@ -1,17 +1,20 @@
-//! Reference implementation of `spec/normative.md` §1–10 and the §11 EIP-712 digests.
+//! Reference implementation of the normative spec (`spec/normative.md`): the protocol's
+//! hashing rules, MMR commitment structure, update decomposition, inclusion proofs,
+//! Fiat–Shamir evaluation point, custody sampling, and the EIP-712 digests.
 //!
-//! This crate is the authoritative executable form of the normative spec: every public
-//! function cites the section it implements, and the test suite checks the crate against
-//! the golden vectors in `vectors/` value-for-value. Contract, circuit, and daemon code
-//! must agree with this crate; where they can't share code, they share the vectors.
+//! This crate is the authoritative executable form of that spec, and the test suite checks
+//! the crate against the golden vectors in `vectors/` value-for-value. Contract, circuit,
+//! and daemon code must agree with this crate; where they can't share code, they share the
+//! vectors.
 
 use num_bigint::BigUint;
 use tiny_keccak::{Hasher, Keccak};
 
 pub mod eip712;
 
-/// Domain-separation tags (normative §2). Every keccak invocation the protocol defines
-/// is prefixed with exactly one of these.
+/// Domain-separation tags. Every keccak invocation the protocol defines is prefixed with
+/// exactly one of these, so a hash computed in one context can never be replayed in, or
+/// forged from, another.
 pub mod tag {
     pub const LEAF: u8 = 0x00;
     pub const NODE: u8 = 0x01;
@@ -20,16 +23,18 @@ pub mod tag {
     pub const CUSTODY: u8 = 0x04;
 }
 
-/// A 31-byte chunk (normative §3): the protocol's only unit of data.
+/// A 31-byte chunk: the protocol's only unit of data (one chunk fills one blob field
+/// element, with a zero high byte keeping it below the BLS modulus).
 pub type Chunk = [u8; 31];
 /// A 32-byte hash: leaves, nodes, peaks, roots, seeds, versioned hashes.
 pub type Hash = [u8; 32];
 
-/// BLS12-381 scalar field modulus (normative §1) — the field EIP-4844 blob polynomials
-/// live in; the Fiat–Shamir point `z` is reduced into it.
+/// BLS12-381 scalar field modulus — the field EIP-4844 blob polynomials live in; the
+/// Fiat–Shamir point `z` is reduced into it.
 pub const R_BLS_HEX: &str = "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001";
 
-/// keccak-256 (normative §1) — original Keccak padding, as Ethereum's KECCAK256 opcode.
+/// keccak-256 with original Keccak padding, exactly Ethereum's KECCAK256 opcode — not
+/// NIST SHA-3, which differs in a single padding byte and would change every hash.
 pub fn keccak256(data: &[u8]) -> Hash {
     let mut k = Keccak::v256();
     let mut out = [0u8; 32];
@@ -38,7 +43,8 @@ pub fn keccak256(data: &[u8]) -> Hash {
     out
 }
 
-/// Leaf hash (normative §5.1): `H(0x00 ‖ chunk)`.
+/// Hash a 31-byte chunk into a leaf: `H(0x00 ‖ chunk)`. Leaf and interior-node hashes
+/// use different domain tags so one can never be forged from the other.
 pub fn leaf(chunk: &Chunk) -> Hash {
     let mut buf = [0u8; 32];
     buf[0] = tag::LEAF;
@@ -46,7 +52,7 @@ pub fn leaf(chunk: &Chunk) -> Hash {
     keccak256(&buf)
 }
 
-/// Interior node hash (normative §5.1): `H(0x01 ‖ left ‖ right)`.
+/// Interior node hash: `H(0x01 ‖ left ‖ right)`.
 /// `left` always covers the lower (older) leaf indices.
 pub fn node(left: &Hash, right: &Hash) -> Hash {
     let mut buf = [0u8; 65];
@@ -56,8 +62,9 @@ pub fn node(left: &Hash, right: &Hash) -> Hash {
     keccak256(&buf)
 }
 
-/// Bagged root (normative §5.3): `H(0x02 ‖ u64be(n) ‖ peaks…)`, peaks in canonical
-/// (descending-height) order. Defined for the empty MMR too.
+/// Bagged root: `H(0x02 ‖ u64be(n) ‖ peaks…)`, peaks in canonical (descending-height)
+/// order. Hashing the leaf count in pins the full structure, and gives the empty MMR
+/// (n = 0, no peaks) a well-defined root too.
 pub fn root(leaf_count: u64, peaks: &[Hash]) -> Hash {
     let mut buf = Vec::with_capacity(9 + 32 * peaks.len());
     buf.push(tag::ROOT);
@@ -68,14 +75,17 @@ pub fn root(leaf_count: u64, peaks: &[Hash]) -> Hash {
     keccak256(&buf)
 }
 
-/// Peak heights at leaf count `n` (normative §5.2): the set bits of `n`, tallest first.
+/// Peak heights at leaf count `n`: the set bits of `n`, tallest first. The peak forest
+/// behaves like a binary counter, so a peak of height `h` exists exactly when bit `h`
+/// of `n` is set.
 pub fn peak_heights(n: u64) -> Vec<u32> {
     (0..64).rev().filter(|h| (n >> h) & 1 == 1).collect()
 }
 
-/// Update decomposition (normative §6.1): split `m` leaves appended after leaf count `n`
-/// into the height sequence of maximal aligned perfect subtrees. Deterministic in
-/// `(n, m)`; heights are never transmitted — verifiers recompute this.
+/// Update decomposition: split `m` leaves appended after leaf count `n` into the height
+/// sequence of maximal aligned perfect subtrees (a subtree of height `h` may only start
+/// at a leaf index divisible by 2^h). Deterministic in `(n, m)`; heights are never
+/// transmitted — verifiers recompute this, so a publisher cannot lie about structure.
 pub fn decompose(n: u64, m: u64) -> Vec<u32> {
     assert!(m >= 1, "update must append at least one chunk");
     let mut heights = Vec::new();
@@ -92,8 +102,8 @@ pub fn decompose(n: u64, m: u64) -> Vec<u32> {
     heights
 }
 
-/// The MMR state a verifier holds (normative §5): leaf count + one peak per height,
-/// exactly mirroring the on-chain storage.
+/// The MMR state a verifier holds: leaf count + one peak per height, exactly mirroring
+/// the on-chain storage.
 #[derive(Debug, Clone, Default)]
 pub struct Mmr {
     /// peak per height; at most one entry per height (binary-counter invariant)
@@ -110,18 +120,19 @@ impl Mmr {
         self.leaf_count
     }
 
-    /// Peaks in canonical order: descending height = oldest leaves first (normative §5.2).
+    /// Peaks in canonical order: descending height, which equals oldest leaves first.
     pub fn peaks(&self) -> Vec<Hash> {
         self.peaks.iter().rev().map(|(_, p)| *p).collect()
     }
 
-    /// Bagged root of the current state (normative §5.3).
+    /// Bagged root of the current state.
     pub fn root(&self) -> Hash {
         root(self.leaf_count, &self.peaks())
     }
 
-    /// Apply an update of `m` chunks given its subtree peaks in §6.1 order — the
-    /// contract's merge algorithm (normative §6.2).
+    /// Apply an update of `m` chunks given its subtree peaks in [`decompose`] order —
+    /// the contract's merge algorithm: while a peak of the incoming height already
+    /// exists, merge the two and carry the result up one height, then insert.
     pub fn apply_update(&mut self, subtree_peaks: &[Hash], m: u64) -> Result<(), &'static str> {
         let heights = decompose(self.leaf_count, m);
         if subtree_peaks.len() != heights.len() {
@@ -149,7 +160,8 @@ impl Mmr {
     }
 }
 
-/// Locate the peak covering leaf `i` at leaf count `n` (normative §7.1).
+/// Locate the peak covering leaf `i` at leaf count `n`, walking the peaks tallest-first
+/// and accumulating how many leaves each covers.
 /// Returns `(peak_index, subtree_start_leaf, peak_height)`.
 pub fn locate(i: u64, n: u64) -> (usize, u64, u32) {
     assert!(i < n, "leaf index out of range");
@@ -163,8 +175,8 @@ pub fn locate(i: u64, n: u64) -> (usize, u64, u32) {
     unreachable!("peak_heights covers all leaves below n")
 }
 
-/// Inclusion-proof verification against stored peaks (normative §7.2) — the exact check
-/// the contract runs for challenge responses and the custody escape hatch. The
+/// Inclusion-proof verification against stored peaks — the exact check the contract
+/// runs for challenge responses and the custody escape hatch. The
 /// possession-evidencing element is `chunk` itself: it is hashed before the climb.
 pub fn verify(chunk: &Chunk, i: u64, path: &[Hash], n: u64, peaks: &[Hash]) -> bool {
     if i >= n {
@@ -182,8 +194,9 @@ pub fn verify(chunk: &Chunk, i: u64, path: &[Hash], n: u64, peaks: &[Hash]) -> b
     acc == peaks[k]
 }
 
-/// Fiat–Shamir preimage (normative §8): `0x03 ‖ instance ‖ vh… ‖ priorPeaks… ‖
-/// newSubtreePeaks… ‖ u64be(n0) ‖ u64be(n1)`.
+/// Fiat–Shamir preimage for the blob evaluation point: `0x03 ‖ instance ‖ vh… ‖
+/// priorPeaks… ‖ newSubtreePeaks… ‖ u64be(n0) ‖ u64be(n1)`. Binding the instance
+/// address and the full state transition makes `z` specific to this exact declaration.
 pub fn fs_z_preimage(
     instance: &[u8; 20],
     blob_versioned_hashes: &[Hash],
@@ -209,8 +222,9 @@ pub fn fs_z_preimage(
     buf
 }
 
-/// Fiat–Shamir evaluation point `z` (normative §8), as a 32-byte big-endian field
-/// element: `keccak(preimage) mod r`.
+/// Fiat–Shamir evaluation point `z`, as a 32-byte big-endian field element:
+/// `keccak(preimage) mod r`, reduced into the BLS12-381 scalar field so it is a valid
+/// blob-polynomial evaluation point.
 pub fn fs_z(
     instance: &[u8; 20],
     blob_versioned_hashes: &[Hash],
@@ -236,7 +250,7 @@ pub fn fs_z(
     out
 }
 
-/// Custody sample-index derivation (normative §9):
+/// Custody sample-index derivation:
 /// `uint256(H(0x04 ‖ instance ‖ seed ‖ u64be(providerId) ‖ u64be(j))) mod leafCount`.
 /// Sampling is with replacement; `j ∈ [0, 32)` is also the escape-hatch set.
 pub fn custody_index(
@@ -266,7 +280,8 @@ pub fn custody_index(
 
 /// Test-data helpers shared by the vector tests and (later) the Rust vector generator.
 /// These implement the *publisher's* side: synthesizing chunks and computing the subtree
-/// roots that go into declarations. Pattern per normative §10.
+/// roots that go into declarations. The chunk pattern is fixed by the normative spec so
+/// every implementation can synthesize identical test data without shipping it.
 pub mod testvec {
     use super::*;
 
@@ -293,8 +308,8 @@ pub mod testvec {
         mmr
     }
 
-    /// Produce an inclusion proof for test leaf `i` at leaf count `n` (normative §7):
-    /// `(peak_index, path bottom-first)`.
+    /// Produce an inclusion proof for test leaf `i` at leaf count `n`: the covering
+    /// peak's index plus the sibling hashes from the leaf up, bottom level first.
     pub fn prove(i: u64, n: u64) -> (usize, Vec<Hash>) {
         let (k, start, h) = locate(i, n);
         let off = i - start;

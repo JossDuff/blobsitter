@@ -5,9 +5,9 @@ import {BlobsitterInstance} from "src/BlobsitterInstance.sol";
 import {InstanceTestBase} from "test/helpers/InstanceTestBase.sol";
 import {TestVec} from "test/helpers/TestVec.sol";
 
-/// declareFor (§12.3): happy paths through the real point-evaluation precompile (see
+/// declareFor: happy paths through the real point-evaluation precompile (see
 /// InstanceTestBase for the zero-blob-opening strategy) and selector-matched negatives
-/// for every §16 declaration error.
+/// for every declaration error the instance defines.
 contract DeclareTest is InstanceTestBase {
     function test_declareFor() public {
         (BlobsitterInstance.Declaration memory d, BlobsitterInstance.BlobOpening[] memory o) =
@@ -26,7 +26,8 @@ contract DeclareTest is InstanceTestBase {
         assertEq(instance.appPointer(), bytes32(0), "zero appPointer means no update");
 
         // Second declaration (5 → 8, the fs_z.json shape) with a batch-final
-        // appPointer, submitted exactly at its deadline (§11.2: valid while now <= it).
+        // appPointer, submitted exactly at its deadline (intent deadlines are
+        // inclusive: valid while now <= deadline).
         bytes32 ptr = keccak256("batch-final view CID");
         (d, o) = _makeDeclaration(3, ptr, address(0));
         d.deadline = uint64(block.timestamp);
@@ -102,8 +103,8 @@ contract DeclareTest is InstanceTestBase {
         instance.declareFor(d, sig, o, goodProof);
     }
 
-    /// §16 EmptyUpdate: newLeafCount ≤ current leafCount — both the equal and the
-    /// regressing case.
+    /// EmptyUpdate rejects any declaration with newLeafCount ≤ current leafCount — the
+    /// MMR is append-only, so both the equal and the regressing case must revert.
     function test_declareFor_emptyUpdate() public {
         _declare(4);
         (BlobsitterInstance.Declaration memory d, BlobsitterInstance.BlobOpening[] memory o) =
@@ -145,7 +146,8 @@ contract DeclareTest is InstanceTestBase {
         instance.declareFor(d, sig, none, goodProof);
     }
 
-    /// The transaction's blobs must be exactly the signed ones (§12.3 check 2).
+    /// The carrying transaction's blobs must be exactly the versioned hashes the
+    /// publisher signed — a carrier cannot substitute its own blobs.
     function test_declareFor_blobHashMismatch() public {
         (BlobsitterInstance.Declaration memory d, BlobsitterInstance.BlobOpening[] memory o) =
             _makeDeclaration(2, bytes32(0), address(0));
@@ -217,8 +219,9 @@ contract DeclareTest is InstanceTestBase {
     }
 }
 
-/// §12.7 activity-checkpoint advancement, on an instance sized so the threshold is
-/// reachable in-test (dormancyMinChunks = 8).
+/// Activity-checkpoint advancement (the dormancy clock resets only once enough new
+/// chunks have accumulated since the last checkpoint), on an instance sized so the
+/// threshold is reachable in-test (dormancyMinChunks = 8).
 contract DeclareCheckpointTest is InstanceTestBase {
     function _params() internal view override returns (BlobsitterInstance.Params memory p) {
         p = super._params();

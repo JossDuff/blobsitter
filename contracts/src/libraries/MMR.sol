@@ -1,30 +1,35 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-/// Merkle Mountain Range primitives — normative §5 (hashing, peaks, bagged root) and
-/// §6 (update decomposition and peak-merge). Every hash carries its §2 domain tag.
+/// Merkle Mountain Range primitives: leaf/node/root hashing, update decomposition, and
+/// peak-merge. Every hash carries a distinct leading domain-tag byte, so a value of one
+/// kind (leaf, interior node, bagged root) can never be forged from another.
 ///
 /// Peaks are always handled in canonical order: descending height, i.e. the peak covering
-/// the oldest leaves first (§5.2). At leaf count n the peak heights are exactly the set
-/// bits of n, which is why presence-by-height can be tracked with n's bits during a merge.
+/// the oldest leaves first. At leaf count n the peak heights are exactly the set bits of
+/// n, which is why presence-by-height can be tracked with n's bits during a merge.
 library MMR {
-    /// §5.1: Leaf(c) = H(0x00 ‖ c), c a 31-byte chunk (33-byte preimage).
+    /// Hash a 31-byte chunk into a leaf: Leaf(c) = H(0x00 ‖ c), a 33-byte preimage
+    /// under the leaf domain tag.
     function leafHash(bytes31 chunk) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(bytes1(0x00), chunk));
     }
 
-    /// §5.1: Node(a, b) = H(0x01 ‖ a ‖ b); `a` is the LEFT child (lower leaf indices).
+    /// Hash two subtree roots into an interior node: Node(a, b) = H(0x01 ‖ a ‖ b);
+    /// `a` is the LEFT child (lower leaf indices).
     function nodeHash(bytes32 a, bytes32 b) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(bytes1(0x01), a, b));
     }
 
-    /// §5.3: Root(n, peaks) = H(0x02 ‖ u64be(n) ‖ peaks…), canonical order.
+    /// Bag the peaks into one root binding the whole MMR state:
+    /// Root(n, peaks) = H(0x02 ‖ u64be(n) ‖ peaks…), peaks in canonical order.
     /// Defined for the empty MMR too (n = 0, no peaks).
     function bagRoot(uint64 n, bytes32[] memory peaks) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(bytes1(0x02), n, peaks));
     }
 
-    /// popcount(n) — the canonical peak-list length at leaf count n (§5.2).
+    /// popcount(n) — the canonical peak-list length at leaf count n (one peak per set
+    /// bit of n).
     function peakCount(uint64 n) internal pure returns (uint256 count) {
         uint256 x = n;
         while (x != 0) {
@@ -35,7 +40,7 @@ library MMR {
         }
     }
 
-    /// §6.1: split an update of m ≥ 1 leaves appended after leaf count n into the height
+    /// Split an update of m ≥ 1 leaves appended after leaf count n into the height
     /// sequence of maximal aligned perfect subtrees. Deterministic in (n, m); heights are
     /// never transmitted — the contract recomputes them. Length ≤ 2·⌈log2(m+1)⌉ + 1 ≤ 129.
     function decompose(uint64 n, uint64 m) internal pure returns (uint8[] memory heights) {
@@ -60,11 +65,11 @@ library MMR {
         }
     }
 
-    /// §6.2: merge the submitted subtree roots into the stored peaks, binary-counter
-    /// style. `peaks` is the canonical list at leaf count n; `heights` MUST be
-    /// decompose(n, m) with `subtreePeaks.length == heights.length` (the caller enforces
-    /// this — it is a normative check with its own error). Returns the new canonical peak
-    /// list and leaf count.
+    /// Merge the submitted subtree roots into the stored peaks, binary-counter style.
+    /// `peaks` is the canonical list at leaf count n; `heights` MUST be decompose(n, m)
+    /// with `subtreePeaks.length == heights.length` (the caller enforces this — it is a
+    /// normative check with its own error). Returns the new canonical peak list and leaf
+    /// count.
     function applyUpdate(
         bytes32[] memory peaks,
         uint64 n,
@@ -121,9 +126,9 @@ library MMR {
         newCount = cnt;
     }
 
-    /// §7.1: locate the peak whose perfect subtree covers leaf `i` at leaf count `n`.
+    /// Locate the peak whose perfect subtree covers leaf `i` at leaf count `n`.
     /// Returns (peak index in canonical order, subtree's first leaf index, peak height).
-    /// Callers MUST ensure `i < n` (the §7.2 wrapper checks it).
+    /// Callers MUST ensure `i < n` (the verify() wrapper checks it).
     function locate(uint64 i, uint64 n) internal pure returns (uint256 k, uint64 start, uint8 h) {
         for (uint256 height = 64; height > 0;) {
             unchecked {
@@ -140,8 +145,8 @@ library MMR {
         assert(false); // unreachable while i < n: the peaks cover all n leaves
     }
 
-    /// §7.2: inclusion-proof verification against stored peaks — the exact check the
-    /// contract runs for challenge responses (and the custody escape hatch in M3). The
+    /// Inclusion-proof verification against stored peaks — the exact check the contract
+    /// runs for challenge responses (and the custody escape hatch in M3). The
     /// possession-evidencing element is the raw chunk: it is hashed before the climb.
     /// SNARK-free by construction and MUST remain so (CLAUDE.md invariant 4).
     function verify(

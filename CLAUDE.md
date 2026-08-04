@@ -8,7 +8,7 @@ and bonded storage providers accountable via challenges and slashing.
 ## Source of truth
 
 - `spec/verifiable-bonded-persistence-protocol.md` — the design spec (the WHY). All economic
-  constants and windows live in its §10 table; cite the section when using one in code.
+  constants and windows live in its §10 table.
 - `spec/normative.md` + `vectors/` (once they exist) — the implementation spec and golden
   test vectors (the WHAT). Implement against them exactly.
 - **If anything is ambiguous, or two documents disagree: STOP and surface the conflict.**
@@ -74,5 +74,9 @@ and bonded storage providers accountable via challenges and slashing.
 - Golden vectors in `vectors/` are cross-component truth: contract, circuit, daemon, and
   reference-implementation tests all consume the same files. **Never edit a vector to make a
   test pass** — regenerate it from the reference implementation and explain the diff.
+- **Code comments are for humans and must stand alone.** Explain the rule or rationale in
+  plain language inline; never cite spec section numbers (§X.Y) — a pointer that makes the
+  reader open a second file fractures understanding. (Test-plan invariant IDs in test names
+  are the exception: coverage is audited against them.)
 - Prefer Foundry invariant/fuzz tests for the provider/challenge/unbonding state machine.
 - Small, scoped commits; spec changes and code changes in separate commits.

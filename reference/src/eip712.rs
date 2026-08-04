@@ -1,4 +1,4 @@
-//! EIP-712 typed-data hashing (normative §11).
+//! EIP-712 typed-data hashing for publisher intents.
 //!
 //! The publisher never sends transactions; every publisher action is one of the three
 //! typed structs below, signed and verified on-chain via ERC-1271. This module is the
@@ -7,7 +7,8 @@
 
 use crate::{keccak256, Hash};
 
-/// Typehash strings — exact, single-line, no whitespace (§11.2 wraps them for display).
+/// Typehash strings — exact, single-line, no whitespace (the normative spec wraps them
+/// across lines for display only).
 pub const EIP712_DOMAIN_TYPE: &str =
     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
 pub const DECLARATION_TYPE: &str = "Declaration(uint64 nonce,uint64 deadline,\
@@ -18,8 +19,8 @@ pub const SET_APP_POINTER_TYPE: &str =
 pub const SET_SUCCESSOR_TYPE: &str =
     "SetSuccessor(uint64 nonce,uint64 deadline,address successor)";
 
-/// Domain name and version (§11.1); chain id + verifying contract bind instance and
-/// chain, so the structs carry no explicit instance field.
+/// Domain name and version; chain id + verifying contract bind instance and chain, so
+/// the structs carry no explicit instance field.
 pub const DOMAIN_NAME: &str = "blobsitter";
 pub const DOMAIN_VERSION: &str = "1";
 
@@ -42,7 +43,7 @@ fn hash_array(items: &[Hash]) -> Hash {
     keccak256(&items.concat())
 }
 
-/// §11.1 domain separator for an instance deployed at `verifying_contract` on `chain_id`.
+/// Domain separator for an instance deployed at `verifying_contract` on `chain_id`.
 pub fn domain_separator(chain_id: u64, verifying_contract: &[u8; 20]) -> Hash {
     let mut buf = Vec::with_capacity(160);
     buf.extend_from_slice(&keccak256(EIP712_DOMAIN_TYPE.as_bytes()));
@@ -54,7 +55,7 @@ pub fn domain_separator(chain_id: u64, verifying_contract: &[u8; 20]) -> Hash {
 }
 
 /// The standard `keccak256(0x1901 ‖ domainSeparator ‖ structHash)` digest the instance
-/// passes to `isValidSignature` (§11.3).
+/// passes to `isValidSignature`.
 pub fn digest(domain_separator: &Hash, struct_hash: &Hash) -> Hash {
     let mut buf = Vec::with_capacity(66);
     buf.extend_from_slice(&[0x19, 0x01]);
@@ -63,7 +64,7 @@ pub fn digest(domain_separator: &Hash, struct_hash: &Hash) -> Hash {
     keccak256(&buf)
 }
 
-/// §11.2 `Declaration` — the signed intent behind `declareFor`.
+/// `Declaration` — the signed intent behind `declareFor`.
 pub struct Declaration {
     pub nonce: u64,
     pub deadline: u64,
@@ -89,7 +90,7 @@ impl Declaration {
     }
 }
 
-/// §11.2 `SetAppPointer`.
+/// `SetAppPointer` — the signed intent that sets the protocol-inert app-layer pointer.
 pub struct SetAppPointer {
     pub nonce: u64,
     pub deadline: u64,
@@ -107,7 +108,7 @@ impl SetAppPointer {
     }
 }
 
-/// §11.2 `SetSuccessor`.
+/// `SetSuccessor` — the signed intent that sets the write-once successor pointer.
 pub struct SetSuccessor {
     pub nonce: u64,
     pub deadline: u64,

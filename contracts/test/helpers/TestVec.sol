@@ -4,10 +4,11 @@ pragma solidity 0.8.28;
 import {MMR} from "src/libraries/MMR.sol";
 
 /// Publisher-side test-data synthesis, mirroring `reference::testvec` and the vector
-/// generator: the deterministic chunk pattern (normative §10) and perfect-subtree roots.
+/// generator: the deterministic chunk pattern the normative spec fixes for test vectors,
+/// plus perfect-subtree roots.
 /// Test code only — never part of the template.
 library TestVec {
-    /// §10: chunk(i)[b] = (31·i + b) mod 256.
+    /// The normative pattern chunk: chunk(i)[b] = (31·i + b) mod 256.
     function chunk(uint64 i) internal pure returns (bytes31 c) {
         bytes memory buf = new bytes(31);
         for (uint256 b = 0; b < 31; ++b) {
@@ -27,8 +28,8 @@ library TestVec {
         return MMR.nodeHash(subtreeRoot(start, h - 1), subtreeRoot(start + half, h - 1));
     }
 
-    /// The §6.1 subtree peaks a publisher would submit for an update of m chunks after
-    /// leaf count n, built from the pattern chunks.
+    /// The decomposition subtree peaks a publisher would submit for an update of m chunks
+    /// after leaf count n, built from the pattern chunks.
     function subtreePeaks(uint64 n, uint64 m) internal pure returns (bytes32[] memory out) {
         uint8[] memory heights = MMR.decompose(n, m);
         out = new bytes32[](heights.length);
@@ -39,7 +40,7 @@ library TestVec {
         }
     }
 
-    /// Inclusion proof for pattern leaf `i` at leaf count `n` (§7): the sibling hash at
+    /// Inclusion proof for pattern leaf `i` at leaf count `n`: the sibling hash at
     /// every level from the leaf up to its covering peak, bottom level first. Mirrors
     /// `reference::testvec::prove`.
     function prove(uint64 i, uint64 n) internal pure returns (uint256 k, bytes32[] memory path) {

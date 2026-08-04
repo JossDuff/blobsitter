@@ -28,10 +28,11 @@ interface ISafeMessageHash {
     function getMessageHash(bytes memory message) external view returns (bytes32);
 }
 
-/// Test-plan Layer 4: the real publisher flow — a real deployed Safe (1.4.1 canonical
+/// Mainnet-fork test of the real publisher flow — a real deployed Safe (1.4.1 canonical
 /// mainnet contracts, from fork state) as the ERC-1271 publisher, signing through the
-/// SafeMessage EIP-712 envelope (§11.3 non-normative tooling note). The instance-side
-/// check is untouched: it still just calls isValidSignature(digest, sig).
+/// SafeMessage EIP-712 envelope (a wallet-side nesting the spec leaves to publisher
+/// tooling, not a normative contract rule). The instance-side check is untouched: it
+/// still just calls isValidSignature(digest, sig).
 ///
 /// Secret-gated like PointEvalForkTest.
 contract SafeErc1271ForkTest is InstanceTestBase {

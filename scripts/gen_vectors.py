@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Golden test-vector generator for spec/normative.md sections 1-10.
+"""Golden test-vector generator for the normative spec (spec/normative.md).
 
 WHAT THIS IS
 ------------
@@ -125,7 +125,7 @@ def keccak256(msg: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Self-validation before we emit anything (spec section 1 anchors).
+# Self-validation before we emit anything: two independent known-answer anchors.
 #
 # Anchor 1: keccak256 of the empty string. This exact value (ending ...a470)
 # appears all over Ethereum as the "empty code hash", so it is beyond doubt.
@@ -155,7 +155,7 @@ def _sha3_256_empty_check():
 _sha3_256_empty_check()
 
 # ============================================================================
-# PART 2 -- the protocol's primitives, exactly as spec/normative.md defines them
+# PART 2 -- the protocol's primitives, exactly as the normative spec defines them
 #
 # Quick mental model of the commitment structure (an MMR, "Merkle Mountain
 # Range"): the dataset is an append-only sequence of 31-byte chunks. Rather
@@ -186,9 +186,9 @@ def hx(b):
 
 
 def chunk(i):
-    """The deterministic test chunk pattern (spec section 10): chunk i is 31
-    bytes whose byte b equals (31*i + b) mod 256. Arbitrary but fixed, so every
-    implementation can synthesize identical test data without shipping it."""
+    """The deterministic test chunk pattern: chunk i is 31 bytes whose byte b
+    equals (31*i + b) mod 256. Arbitrary but fixed by the normative spec, so
+    every implementation can synthesize identical test data without shipping it."""
     return bytes((31 * i + b) % 256 for b in range(31))
 
 
@@ -220,7 +220,7 @@ def peak_heights(n):
 
 def decompose(n, m):
     """Split an update of m new leaves (appended after existing leaf count n)
-    into perfect subtrees the publisher will submit (spec section 6.1).
+    into perfect subtrees the publisher will submit.
 
     A perfect subtree of height h may only start at a leaf index that is a
     multiple of 2^h ("alignment") -- otherwise it wouldn't slot into the tree
@@ -255,8 +255,8 @@ def subtree_root(start, h):
 
 
 def apply_update(peaks_by_h, n, new_subtree_peaks, heights):
-    """The contract's merge algorithm (spec section 6.2): fold submitted
-    subtree roots into the stored peaks, binary-counter style.
+    """The contract's merge algorithm: fold submitted subtree roots into the
+    stored peaks, binary-counter style.
 
     `peaks_by_h` maps height -> peak hash (at most one peak per height, exactly
     like at most one 1-bit per position in a binary number). For each incoming
@@ -289,7 +289,7 @@ def build(n):
 
 
 def prove(i, n):
-    """Produce an inclusion proof for leaf i at leaf count n (spec section 7).
+    """Produce an inclusion proof for leaf i at leaf count n.
 
     Step 1: find which peak's subtree contains leaf i, by walking the peaks
     tallest-first and accumulating how many leaves each one covers.
@@ -447,7 +447,7 @@ emit("inclusion_proofs.json", {"_spec": "normative.md §7.2",
                                "peaks_for_n13": [hx(p) for p in peaks], "cases": cases})
 
 # --- fs_z.json ---------------------------------------------------------------
-# One full Fiat-Shamir example (spec section 8): a declaration appending 3
+# One full Fiat-Shamir example: a declaration appending 3
 # chunks to a 5-leaf MMR on a made-up instance address, with one made-up blob
 # versioned hash (3 chunks fit in one blob). The file includes the complete
 # preimage bytes -- so an implementation that gets a different z can diff its
@@ -481,7 +481,7 @@ emit("fs_z.json", {
 })
 
 # --- custody_indices.json ----------------------------------------------------
-# The custody sampling derivation (spec section 9): from (instance, period
+# The custody sampling derivation: from (instance, period
 # seed, providerId, sample ordinal j) to a chunk index. The first 16 indices
 # are emitted; j = 0..31 is also exactly what the escape hatch reveals. The
 # leaf count is deliberately NOT a power of two, so an implementation that
@@ -504,14 +504,14 @@ emit("custody_indices.json", {
 })
 
 # --- eip712.json -------------------------------------------------------------
-# EIP-712 hashing (spec section 11): the three exact typehash strings, the domain
+# EIP-712 hashing for publisher intents: the three exact typehash strings, the domain
 # separator for a fixed dummy chain id + instance address, and struct-hash/digest pairs
 # for sample instances of every struct. The contract, the Rust reference, and the
 # publisher toolchain must all reproduce these digests bit-for-bit; a disagreement here
 # means signatures made by one component would be rejected by another.
 #
-# The typehash strings are single-line with no whitespace (the spec's section 11.2 code
-# block wraps them for display only). The dummy domain uses chainId 31337 (Foundry's
+# The typehash strings are single-line with no whitespace (the spec's code block wraps
+# them across lines for display only). The dummy domain uses chainId 31337 (Foundry's
 # default, so forge tests can reproduce the separator on an un-forked test EVM) and the
 # same made-up instance address as fs_z.json.
 

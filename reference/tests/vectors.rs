@@ -38,8 +38,8 @@ fn hex_of(bytes: &[u8]) -> String {
     s
 }
 
-/// Dual-anchor keccak validation (normative §1): the Ethereum empty-hash constant proves
-/// we use Keccak padding; the NIST SHA3-256 constant proves the permutation machinery
+/// Dual-anchor keccak validation: the Ethereum empty-hash constant proves we use Keccak
+/// padding; the NIST SHA3-256 constant proves the permutation machinery
 /// independently. If only the SHA3 one passes, someone swapped in the wrong padding.
 #[test]
 fn keccak_dual_anchor() {

@@ -1,7 +1,7 @@
 //! FFI oracle for the forge differential fuzz test (test-plan I12).
 //!
-//! Usage: `mmr_oracle <leafCount>` — builds the MMR over the first `leafCount` §10
-//! pattern chunks leaf by leaf and prints `abi.encode(bytes32[] peaks, bytes32 root)`
+//! Usage: `mmr_oracle <leafCount>` — builds the MMR over the first `leafCount` chunks of
+//! the normative test pattern leaf by leaf and prints `abi.encode(bytes32[] peaks, bytes32 root)`
 //! as 0x-prefixed hex on stdout, which `vm.ffi` hands back to Solidity as raw bytes.
 //! The contract's batched-merge state must match this crate's answer exactly.
 

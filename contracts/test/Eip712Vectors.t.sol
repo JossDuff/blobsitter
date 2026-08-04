@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {BlobsitterInstance} from "src/BlobsitterInstance.sol";
 
-/// vectors/eip712.json conformance (§11): the instance's digests must equal the golden
+/// vectors/eip712.json conformance: the instance's EIP-712 digests must equal the golden
 /// vectors bit-for-bit — a disagreement means signatures made by the publisher toolchain
 /// (or the Rust reference) would be rejected on-chain. The vector domain is chainId
 /// 31337 + a fixed dummy address, so the instance is deployed at exactly that address.

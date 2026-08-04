@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {MMR} from "./libraries/MMR.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 
-/// Minimal ERC-1271 surface the instance needs (§11.3).
+/// Minimal ERC-1271 surface the instance needs to verify publisher intent signatures.
 interface IERC1271 {
     function isValidSignature(bytes32 digest, bytes calldata signature)
         external
@@ -12,20 +12,20 @@ interface IERC1271 {
         returns (bytes4);
 }
 
-/// The blobsitter instance template — normative §11–§13, §16.
+/// The blobsitter instance template.
 ///
 /// IMMUTABLE POST-DEPLOYMENT: no upgradeability, no governance, no admin roles, no
 /// pausing. The publisher never holds or spends ETH — every publisher action arrives as
 /// an EIP-712-signed intent carried by an arbitrary EOA and verified via ERC-1271.
 ///
-/// Milestone scope: publication core (§12.3), provider lifecycle (§12.4), challenges
-/// (§12.5), and the §15.5 payout pattern are implemented. Custody proofs (§12.6) are
-/// milestone 3; the paymaster (§15) is milestone 4 — its reimbursement hook is a
-/// documented no-op and slash remainders accumulate in pendingSlashRemainders until
-/// then.
+/// Milestone scope: the publication core, the provider lifecycle, possession challenges,
+/// and the push-with-pull-fallback payout pattern are implemented. Custody proofs are
+/// milestone 3; the paymaster is milestone 4 — its reimbursement hook is a documented
+/// no-op and slash remainders accumulate in pendingSlashRemainders until then.
 contract BlobsitterInstance {
     // ---------------------------------------------------------------------------
-    // §16 errors (publication subset). Identity is normative; tests match selectors.
+    // Errors (publication subset). Names and argument types are fixed by the normative
+    // spec; tests match on exact selectors.
     // ---------------------------------------------------------------------------
     error BadSignature();
     error WrongNonce(uint64 expected);
@@ -65,7 +65,8 @@ contract BlobsitterInstance {
     error ProviderSlashed(uint64 providerId);
 
     // ---------------------------------------------------------------------------
-    // §12.8 events (publication subset) — the daemon's contract surface.
+    // Events (publication subset) — the contract surface off-chain daemons index to
+    // reconstruct history; the blob versioned-hash log in particular lives only here.
     // ---------------------------------------------------------------------------
     event Declared(
         uint64 indexed nonce,
@@ -98,8 +99,8 @@ contract BlobsitterInstance {
     event Slashed(uint64 indexed providerId, SlashCause cause, address executor);
 
     // ---------------------------------------------------------------------------
-    // §11 EIP-712. Typehash strings are exact and single-line (§11.2 wraps them for
-    // display only); golden truth is vectors/eip712.json.
+    // EIP-712 machinery. Typehash strings are exact and single-line (any wrapping in
+    // documents is for display only); golden truth is vectors/eip712.json.
     // ---------------------------------------------------------------------------
     bytes32 private constant DOMAIN_TYPEHASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
@@ -115,7 +116,7 @@ contract BlobsitterInstance {
     bytes32 private constant VERSION_HASH = keccak256("1");
     bytes4 private constant ERC1271_MAGIC = 0x1626ba7e;
 
-    /// §11.2 Declaration — field order matches the typehash exactly.
+    /// A signed publication intent — field order matches the typehash exactly.
     struct Declaration {
         uint64 nonce;
         uint64 deadline;
@@ -127,7 +128,7 @@ contract BlobsitterInstance {
     }
 
     // ---------------------------------------------------------------------------
-    // §12.1 template constants (identical in every instance).
+    // Template constants — identical in every instance of the template.
     // ---------------------------------------------------------------------------
     uint256 public constant CHUNK_SIZE = 31;
     uint256 public constant RESPONSE_GAS_PER_CHUNK = 38_680;
@@ -135,24 +136,23 @@ contract BlobsitterInstance {
     uint256 public constant BOND_MULTIPLIER = 3;
 
     /// The canonical SP1VerifierGateway deployment. PROVISIONAL: pinned for real —
-    /// together with the exact SP1 release — at contract freeze (§12.1). Tests etch the
+    /// together with the exact SP1 release — at contract freeze. Tests etch the
     /// interface-exact mock at this address.
     address public constant SP1_VERIFIER = 0x397A5f7f3dBd538f23DE225B51f532c34448dA9B;
     /// PLACEHOLDER vkeys: the real values are the SP1 program verifying keys, computed
-    /// when the circuits are built and frozen as template constants (§12.1, §14).
+    /// when the circuits are built and then frozen as template constants.
     bytes32 public constant EQUIVALENCE_VKEY = keccak256("blobsitter.equivalence-vkey.placeholder");
     bytes32 public constant CUSTODY_VKEY = keccak256("blobsitter.custody-vkey.placeholder");
 
-    /// §1: r, the BLS12-381 scalar field modulus (the EIP-4844 blob field).
+    /// r, the BLS12-381 scalar field modulus — the field EIP-4844 blob elements live in.
     uint256 private constant BLS_MODULUS =
         52435875175126190479447740508185965837690552500527637822603658699938581184513;
     /// EIP-4844 point-evaluation precompile.
     address private constant POINT_EVALUATION = address(0x0A);
 
     // ---------------------------------------------------------------------------
-    // §12.1 constructor parameters — fixed forever at deployment. Providers MUST
-    // sanity-check them before staking; the contract adds no validation the spec
-    // doesn't require.
+    // Constructor parameters — fixed forever at deployment. Providers MUST sanity-check
+    // them before staking; the contract adds no validation the spec doesn't require.
     // ---------------------------------------------------------------------------
     struct Params {
         address publisher; // ERC-1271 wallet
@@ -189,22 +189,24 @@ contract BlobsitterInstance {
     uint64 public immutable dormancyMinChunks;
 
     // ---------------------------------------------------------------------------
-    // §12.2 instance state (publication subset).
+    // Instance state (publication subset).
     // ---------------------------------------------------------------------------
     uint64 public leafCount;
-    bytes32[] public peaks; // canonical order (§5.2)
+    bytes32[] public peaks; // canonical order: descending height, oldest subtree first
     uint64 public declarationNonce;
     uint64 public appPointerNonce;
     uint64 public successorNonce;
     bytes32 public appPointer;
     address public successor; // write-once; protocol-inert (never interpreted)
-    uint64 public activityCheckpointTime; // §12.7
+    // Dormancy tracking: when activity was last checkpointed, and the leaf count then.
+    // Declarations that grow the MMR by enough chunks restart the clock (see declareFor).
+    uint64 public activityCheckpointTime;
     uint64 public activityCheckpointLeafCount;
-    /// §15.5 pull-fallback ledger: balances a failed push parked here; claim() drains.
+    /// Pull-fallback ledger: balances of failed pushes park here; claim() drains.
     mapping(address => uint256) public claimable;
 
     // ---------------------------------------------------------------------------
-    // §12.2 provider state.
+    // Provider state.
     // ---------------------------------------------------------------------------
 
     enum ProviderStatus {
@@ -232,11 +234,11 @@ contract BlobsitterInstance {
         uint32 openChallenges; // blocks withdraw() while nonzero
     }
 
-    uint64 public nextProviderId = 1; // §9: providerId 0 means "none", never assigned
+    uint64 public nextProviderId = 1; // providerId 0 means "none" and is never assigned
     mapping(uint64 => Provider) internal providers;
 
     // ---------------------------------------------------------------------------
-    // §12.2 challenge state.
+    // Challenge state.
     // ---------------------------------------------------------------------------
 
     enum SlashCause {
@@ -256,7 +258,8 @@ contract BlobsitterInstance {
         bool resolved;
     }
 
-    /// §7.2 response carrier: the raw chunk plus its sibling path, bottom level first.
+    /// Challenge-response payload: the raw chunk plus its Merkle sibling path, ordered
+    /// bottom-up (the leaf's sibling first).
     struct ChunkProof {
         bytes31 chunk;
         bytes32[] path;
@@ -267,8 +270,8 @@ contract BlobsitterInstance {
 
     /// Slash remainders (stake − bounty) held by the instance.
     /// TODO(M4): route through paymaster.absorbSlash() once the constructor deploys
-    /// the paymaster (§12.7, §15.1); this accumulator then disappears. Revisit before
-    /// any deployment freeze.
+    /// the paymaster; this accumulator then disappears. Revisit before any deployment
+    /// freeze.
     uint256 public pendingSlashRemainders;
 
     constructor(Params memory p) {
@@ -287,11 +290,11 @@ contract BlobsitterInstance {
         bucketCapWei = p.bucketCapWei;
         dormancyWindow = p.dormancyWindow;
         dormancyMinChunks = p.dormancyMinChunks;
-        // §12.7: the instance deploys empty (genesis via blobs); the dormancy clock
-        // starts at deployment.
+        // The instance deploys empty — genesis content arrives via ordinary blob
+        // declarations — and the dormancy clock starts ticking at deployment.
         activityCheckpointTime = uint64(block.timestamp);
         activityCheckpointLeafCount = 0;
-        // Milestone 4: the paymaster is deployed here and bound one-way (§12, §15).
+        // Milestone 4: the paymaster is deployed here and bound one-way.
     }
 
     // ---------------------------------------------------------------------------
@@ -303,12 +306,13 @@ contract BlobsitterInstance {
         return peaks;
     }
 
-    /// §5.3 bagged root of the current state — computed on demand, never stored.
+    /// Bagged root of the current state (a single hash binding the leaf count and every
+    /// peak) — computed on demand, never stored.
     function root() external view returns (bytes32) {
         return MMR.bagRoot(leafCount, peaks);
     }
 
-    /// §11.1 domain separator. Computed per call: the template is immutable but the
+    /// EIP-712 domain separator. Computed per call: the template is immutable but the
     /// chain can fork, and chainId must always be the executing chain's.
     function domainSeparator() public view returns (bytes32) {
         return keccak256(
@@ -316,7 +320,7 @@ contract BlobsitterInstance {
         );
     }
 
-    /// §11.2 Declaration digest (public so carriers and tooling can precompute).
+    /// EIP-712 Declaration digest (public so carriers and tooling can precompute).
     function declarationDigest(Declaration calldata d) public view returns (bytes32) {
         bytes32 structHash = keccak256(
             abi.encode(
@@ -333,7 +337,7 @@ contract BlobsitterInstance {
         return _digest(structHash);
     }
 
-    /// §11.2 SetAppPointer digest.
+    /// EIP-712 SetAppPointer digest.
     function setAppPointerDigest(uint64 nonce, uint64 deadline, bytes32 pointer)
         public
         view
@@ -342,7 +346,7 @@ contract BlobsitterInstance {
         return _digest(keccak256(abi.encode(SET_APP_POINTER_TYPEHASH, nonce, deadline, pointer)));
     }
 
-    /// §11.2 SetSuccessor digest.
+    /// EIP-712 SetSuccessor digest.
     function setSuccessorDigest(uint64 nonce, uint64 deadline, address target)
         public
         view
@@ -351,7 +355,8 @@ contract BlobsitterInstance {
         return _digest(keccak256(abi.encode(SET_SUCCESSOR_TYPEHASH, nonce, deadline, target)));
     }
 
-    /// §8: the Fiat–Shamir evaluation point z, reduced into the BLS12-381 scalar field.
+    /// The Fiat–Shamir evaluation point z, reduced into the BLS12-381 scalar field. The
+    /// 0x03 domain-tag byte keeps this hash distinct from the MMR leaf/node/root hashes.
     /// The instance address makes z — and hence proofs — instance-bound; every committed
     /// quantity the equivalence statement touches appears in the preimage. Public so
     /// carriers and the publisher toolchain can precompute openings.
@@ -377,7 +382,7 @@ contract BlobsitterInstance {
     }
 
     // ---------------------------------------------------------------------------
-    // §12.3 publication: declareFor.
+    // Publication: declareFor.
     // ---------------------------------------------------------------------------
 
     struct BlobOpening {
@@ -405,7 +410,7 @@ contract BlobsitterInstance {
         uint64 n0 = leafCount;
         if (d.newLeafCount <= n0) revert EmptyUpdate();
         uint64 m = d.newLeafCount - n0;
-        uint256 blobCount = (uint256(m) + 4095) / 4096; // B = ceil(m / 4096) (§4)
+        uint256 blobCount = (uint256(m) + 4095) / 4096; // ceil(m / 4096): 4096 chunks/blob
         if (d.blobVersionedHashes.length != blobCount || openings.length != blobCount) {
             revert BlobCountMismatch(blobCount);
         }
@@ -441,7 +446,8 @@ contract BlobsitterInstance {
         leafCount = n1; // == d.newLeafCount by construction
         declarationNonce = d.nonce + 1;
         if (d.appPointer != bytes32(0)) appPointer = d.appPointer;
-        // §12.7: advance the activity checkpoint if due.
+        // Record activity: once enough new chunks have accumulated since the last
+        // checkpoint, restart the dormancy clock.
         if (n1 - activityCheckpointLeafCount >= dormancyMinChunks) {
             activityCheckpointTime = uint64(block.timestamp);
             activityCheckpointLeafCount = n1;
@@ -455,8 +461,8 @@ contract BlobsitterInstance {
     }
 
     // ---------------------------------------------------------------------------
-    // §12.3 publication: setAppPointer / setSuccessor. Same pattern each: deadline,
-    // own nonce, ERC-1271, effect, event, paymaster-reimbursed.
+    // Publication: setAppPointer / setSuccessor. Same pattern each: deadline, own
+    // nonce, ERC-1271, effect, event, paymaster-reimbursed.
     // ---------------------------------------------------------------------------
 
     function setAppPointer(uint64 nonce, uint64 deadline, bytes32 pointer, bytes calldata sig)
@@ -478,7 +484,8 @@ contract BlobsitterInstance {
         if (block.timestamp > deadline) revert IntentExpired(deadline);
         if (nonce != successorNonce) revert WrongNonce(successorNonce);
         _requireValidSignature(setSuccessorDigest(nonce, deadline, target), sig);
-        // §12.3: additionally write-once and nonzero.
+        // Beyond the common intent checks: the successor pointer is write-once (it can
+        // never be changed once set) and must be nonzero.
         if (successor != address(0)) revert SuccessorAlreadySet();
         if (target == address(0)) revert ZeroAddress();
 
@@ -489,7 +496,7 @@ contract BlobsitterInstance {
     }
 
     // ---------------------------------------------------------------------------
-    // §12.4 provider lifecycle.
+    // Provider lifecycle.
     // ---------------------------------------------------------------------------
 
     /// The full provider record (the mapping is internal; a flat auto-getter would be
@@ -548,7 +555,7 @@ contract BlobsitterInstance {
         _payout(p.withdrawal, stakeWei);
     }
 
-    /// Mirror tier (§12.4): events only — no state, no stake, no protocol standing.
+    /// Mirror tier: events only — no state, no stake, no protocol standing.
     function announce(string calldata url) external {
         emit Announced(url);
     }
@@ -564,7 +571,7 @@ contract BlobsitterInstance {
     }
 
     // ---------------------------------------------------------------------------
-    // §12.5 challenges.
+    // Possession challenges.
     // ---------------------------------------------------------------------------
 
     /// The full challenge record.
@@ -630,7 +637,7 @@ contract BlobsitterInstance {
         );
     }
 
-    /// Answer a challenge with the raw chunks and §7.2 inclusion proofs against the
+    /// Answer a challenge with the raw chunks and Merkle inclusion proofs against the
     /// pinned state, whose peak list arrives as calldata and is re-bagged against the
     /// stored one-word pin. Full index set in one call; an invalid response reverts and
     /// the challenge stays open (no partial credit).
@@ -643,7 +650,8 @@ contract BlobsitterInstance {
     ) external {
         Challenge storage c = _challenge(challengeId);
         Provider storage p = providers[c.providerId];
-        // Guard order per §12.5: operator; window; unresolved; not slashed.
+        // Guard order is fixed by the normative spec (it decides which error fires
+        // first): operator; window; unresolved; not slashed.
         if (msg.sender != p.operator) revert NotOperator(c.providerId);
         uint64 deadline = c.openedAt + responseWindow;
         if (block.timestamp >= deadline) revert ResponseWindowClosed(deadline);
@@ -666,7 +674,7 @@ contract BlobsitterInstance {
         p.openChallenges -= 1;
         emit ChallengeAnswered(challengeId);
         // Bond to the OPERATOR: it compensates response gas the hot wallet paid, and
-        // keeps the hot wallet fueled without touching cold keys (§12.5).
+        // keeps the hot wallet fueled without touching cold keys.
         _payout(p.operator, c.bond);
     }
 
@@ -701,12 +709,12 @@ contract BlobsitterInstance {
     }
 
     // ---------------------------------------------------------------------------
-    // §15.5 payouts: push with pull fallback. Every ETH payout in the system uses
-    // this one pattern; no payout path can revert the operation that triggered it.
+    // Payouts: push with pull fallback. Every ETH payout in the system uses this one
+    // pattern; no payout path can revert the operation that triggered it.
     // ---------------------------------------------------------------------------
 
-    /// Push stipend: enough for a multisig receive, too little for reentrancy
-    /// mischief under CEI ordering (§15.5).
+    /// Push stipend: enough gas for a multisig receive, too little for reentrancy
+    /// mischief under checks-effects-interactions ordering.
     uint256 private constant PAYOUT_GAS_STIPEND = 50_000;
 
     /// Drain the caller's pull-fallback balance. A failing transfer reverts (state
@@ -734,13 +742,13 @@ contract BlobsitterInstance {
     // Internals.
     // ---------------------------------------------------------------------------
 
-    /// `keccak256(0x1901 ‖ domainSeparator ‖ structHash)` (§11.1).
+    /// The standard EIP-712 digest: `keccak256(0x1901 ‖ domainSeparator ‖ structHash)`.
     function _digest(bytes32 structHash) internal view returns (bytes32) {
         return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 
-    /// §11.3: the publisher wallet must return the ERC-1271 magic value for the digest.
-    /// Any failure — wrong value, revert, malformed return, no code at the wallet — is
+    /// The publisher wallet must return the ERC-1271 magic value for the digest. Any
+    /// failure — wrong value, revert, malformed return, no code at the wallet — is
     /// BadSignature. Low-level staticcall: a high-level call would revert without data on
     /// a codeless publisher (extcodesize check) instead of reporting the normative error.
     function _requireValidSignature(bytes32 digest, bytes calldata sig) internal view {
@@ -751,9 +759,10 @@ contract BlobsitterInstance {
         }
     }
 
-    /// §12.3 check 3: the EIP-4844 point-evaluation precompile with input
-    /// `vh ‖ z ‖ y ‖ commitment ‖ kzgProof` (192 bytes). A wrong-length commitment or
-    /// proof simply yields a non-192-byte input, which the precompile rejects.
+    /// One blob's KZG opening (declaration check 3): the EIP-4844 point-evaluation
+    /// precompile with input `vh ‖ z ‖ y ‖ commitment ‖ kzgProof` (192 bytes). A
+    /// wrong-length commitment or proof simply yields a non-192-byte input, which the
+    /// precompile rejects.
     function _verifyOpening(bytes32 vh, bytes32 z, BlobOpening calldata o, uint256 blobIndex)
         private
         view
@@ -763,18 +772,19 @@ contract BlobsitterInstance {
         if (!ok) revert PointEvaluationFailed(blobIndex);
     }
 
-    /// §14 (circuit statements and publicValues byte layouts) is RESERVED and unwritten,
-    /// and inventing an encoding is forbidden — a silent guess becomes permanent. Until
-    /// §14 lands, the instance passes empty publicValues and the mock verifier validates
-    /// only (vkey, proof).
-    /// TODO(§14): encode the equivalence statement's public values exactly as specified.
-    /// This function body is the only place that changes; no call site moves.
+    /// The circuit's public-input byte layout is deliberately not yet specified, and
+    /// inventing an encoding is forbidden — a silent guess becomes permanent. Until the
+    /// spec defines the layout, the instance passes empty publicValues and the mock
+    /// verifier validates only (vkey, proof).
+    /// TODO(spec): once the layout is written, encode the equivalence statement's public
+    /// values exactly as specified. This function body is the only place that changes;
+    /// no call site moves.
     function _equivalencePublicValues() private pure returns (bytes memory) {
         return "";
     }
 
-    /// §12.3 step 6 / §15 carrier reimbursement hook. Milestone 4 deploys the paymaster
-    /// in the constructor and wires this up (gas-capped call, failure ignored,
+    /// Carrier reimbursement hook (declaration step 6). Milestone 4 deploys the
+    /// paymaster in the constructor and wires this up (gas-capped call, failure ignored,
     /// reentrancy-guarded, strictly after all state changes). Until then: no-op.
     function _reimburse(address carrier, uint256 numBlobs, bool isDeclaration) internal {
         // no-op until milestone 4 (paymaster)
