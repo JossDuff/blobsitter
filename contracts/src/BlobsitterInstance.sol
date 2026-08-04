@@ -19,9 +19,9 @@ interface IERC1271 {
 /// an EIP-712-signed intent carried by an arbitrary EOA and verified via ERC-1271.
 ///
 /// Milestone scope: the publication core, the provider lifecycle, possession challenges,
-/// and the push-with-pull-fallback payout pattern are implemented. Custody proofs are
-/// milestone 3; the paymaster is milestone 4 — its reimbursement hook is a documented
-/// no-op and slash remainders accumulate in pendingSlashRemainders until then.
+/// custody proofs (commit/prove/escape/lapse), and the push-with-pull-fallback payout
+/// pattern are implemented. The paymaster is milestone 4 — its reimbursement hook is a
+/// documented no-op and slash remainders accumulate in pendingSlashRemainders until then.
 contract BlobsitterInstance {
     // ---------------------------------------------------------------------------
     // Errors (publication subset). Names and argument types are fixed by the normative
