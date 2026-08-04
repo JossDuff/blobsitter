@@ -33,6 +33,7 @@ contract ProviderHandler is CommonBase, StdUtils {
     mapping(uint64 => uint64[]) internal challengeIndicesOf;
     uint256 public slashCount;
     uint256 public expectedBalance; // I1: exact expected instance balance
+    mapping(uint64 => uint64) public lastProvenGhost; // I16 monotonicity mirror
 
     constructor(
         BlobsitterInstance instance_,
@@ -48,8 +49,10 @@ contract ProviderHandler is CommonBase, StdUtils {
 
     // -------------------------------------------------------------------- actions
 
+    /// Bounded up to 45 days so the walks cross custody periods (30 days) and reach
+    /// lapse territory within an invariant run's depth, not just challenge windows.
     function warp(uint256 delta) external {
-        vm.warp(block.timestamp + _bound(delta, 1 hours, 8 days));
+        vm.warp(block.timestamp + _bound(delta, 1 hours, 45 days));
     }
 
     function declare(uint64 m) external {
@@ -207,6 +210,108 @@ contract ProviderHandler is CommonBase, StdUtils {
         _observe(id);
     }
 
+    // ------------------------------------------------------------ custody actions
+
+    function beginCustody(uint256 seed) external {
+        (uint64 id, BlobsitterInstance.Provider memory p) = _pick(seed);
+        if (id == 0 || p.status != BlobsitterInstance.ProviderStatus.ACTIVE) return;
+        uint64 period = instance.custodyPeriodIndex(id);
+        if (p.commitPeriodPlusOne != 0 && p.commitPeriodPlusOne - 1 == period) return;
+        vm.prevrandao(keccak256(abi.encode("custody seed", seed)));
+        vm.prank(p.operator);
+        instance.beginProof(id);
+        // I14: the fresh commit is for exactly the current period.
+        require(instance.getProvider(id).commitPeriodPlusOne == period + 1, "I14: commit period");
+    }
+
+    /// Prove via the succinct path when the commit is current; when the commit has
+    /// expired, assert the submission is rejected (I14: an expired commit can never
+    /// be used).
+    function submitCustody(uint256 seed) external {
+        (uint64 id, BlobsitterInstance.Provider memory p) = _pick(seed);
+        if (id == 0 || p.status != BlobsitterInstance.ProviderStatus.ACTIVE) return;
+        if (p.commitPeriodPlusOne == 0) return;
+        uint64 committed = p.commitPeriodPlusOne - 1;
+        uint64 current = instance.custodyPeriodIndex(id);
+
+        vm.prank(p.operator);
+        if (committed != current) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    BlobsitterInstance.CommitFromEarlierPeriod.selector, committed, current
+                )
+            );
+            instance.submitProof(id, goodProof);
+            return;
+        }
+        instance.submitProof(id, goodProof);
+        _recordProven(id, current);
+    }
+
+    /// Prove via the escape hatch: reveals derived on the fly from the committed
+    /// snapshot (empty snapshot proves with zero reveals).
+    function submitEscape(uint256 seed) external {
+        (uint64 id, BlobsitterInstance.Provider memory p) = _pick(seed);
+        if (id == 0 || p.status != BlobsitterInstance.ProviderStatus.ACTIVE) return;
+        if (p.commitPeriodPlusOne == 0) return;
+        uint64 current = instance.custodyPeriodIndex(id);
+        if (p.commitPeriodPlusOne - 1 != current) return; // expired path covered above
+
+        uint64 n = p.commitLeafCount;
+        BlobsitterInstance.ChunkProof[] memory reveals =
+            new BlobsitterInstance.ChunkProof[](n == 0 ? 0 : 32);
+        for (uint64 j = 0; j < reveals.length; ++j) {
+            uint64 idx = instance.custodyIndex(p.commitSeed, id, j, n);
+            (, bytes32[] memory path) = TestVec.prove(idx, n);
+            reveals[j] = BlobsitterInstance.ChunkProof({chunk: TestVec.chunk(idx), path: path});
+        }
+        (bytes32[] memory peaks,) = TestVec.buildPeaks(n);
+        vm.prank(p.operator);
+        instance.submitProofEscape(id, n, peaks, reveals);
+        _recordProven(id, current);
+        require(instance.getProvider(id).lastDegraded, "escape must flag degraded");
+    }
+
+    /// I15 both ways: lapse succeeds exactly when the provider is ACTIVE and past the
+    /// grace deadline; otherwise it must revert with the matching reason.
+    function attemptLapse(uint256 seed) external {
+        (uint64 id, BlobsitterInstance.Provider memory p) = _pick(seed);
+        if (id == 0) return;
+        uint256 lapsableAt = uint256(p.anchor) + (uint256(p.lastProvenPlusOne) + 2)
+            * uint256(instance.custodyPeriod()) + instance.lapseGrace();
+        bool shouldSucceed =
+            p.status == BlobsitterInstance.ProviderStatus.ACTIVE && block.timestamp >= lapsableAt;
+
+        try instance.lapse(id) {
+            require(shouldSucceed, "I15: lapse succeeded while not lapsable");
+            require(!stakeDistributed[id], "I3: second distribution via lapse");
+            stakeDistributed[id] = true;
+            slashCount += 1;
+            expectedBalance -= (STAKE * instance.bountyBps()) / 10_000;
+            _observe(id);
+        } catch (bytes memory err) {
+            require(!shouldSucceed, "I15: lapse reverted while lapsable");
+            bytes4 sel = bytes4(err);
+            if (p.status != BlobsitterInstance.ProviderStatus.ACTIVE) {
+                require(sel == BlobsitterInstance.NotActive.selector, "I15: wrong immunity error");
+            } else {
+                require(sel == BlobsitterInstance.NotLapsable.selector, "I15: wrong timing error");
+            }
+        }
+    }
+
+    /// The lapse bounty pays msg.sender — this handler.
+    receive() external payable {}
+
+    /// I16: lastProven never decreases, and an accepted proof sets it to the period it
+    /// proved.
+    function _recordProven(uint64 id, uint64 period) internal {
+        uint64 now_ = instance.getProvider(id).lastProvenPlusOne;
+        require(now_ == period + 1, "I16: accepted proof must mark its period");
+        require(now_ >= lastProvenGhost[id], "I16: lastProven decreased");
+        lastProvenGhost[id] = now_;
+    }
+
     /// I9: challenges must be inadmissible against EXITED/SLASHED providers.
     function attemptInvalidOpen(uint256 seed) external {
         (uint64 id, BlobsitterInstance.Provider memory p) = _pick(seed);
@@ -343,6 +448,38 @@ contract InvariantsProviderTest is InstanceTestBase {
                 if (ch.providerId == id && !ch.resolved) open += 1;
             }
             assertEq(instance.getProvider(id).openChallenges, open, "I8: counter drift");
+        }
+    }
+
+    /// I14 — commit discipline: any stored commit belongs to a period that has not
+    /// passed unnoticed — its period never exceeds the provider's current one (the
+    /// per-op handler assertions cover the submission side: same-period only, expired
+    /// commits rejected).
+    function invariant_I14_commitDiscipline() public view {
+        for (uint256 i = 0; i < handler.providerCount(); ++i) {
+            uint64 id = handler.providerIds(i);
+            BlobsitterInstance.Provider memory p = instance.getProvider(id);
+            if (p.commitPeriodPlusOne == 0) continue;
+            if (p.status != BlobsitterInstance.ProviderStatus.ACTIVE) continue;
+            assertLe(
+                p.commitPeriodPlusOne - 1,
+                instance.custodyPeriodIndex(id),
+                "I14: commit from the future"
+            );
+        }
+    }
+
+    /// I16 — proof monotonicity: the on-chain lastProven for every provider matches
+    /// the ghost that the handler only ever advances (never decreases; accepted proofs
+    /// set it to the period they proved).
+    function invariant_I16_proofMonotonicity() public view {
+        for (uint256 i = 0; i < handler.providerCount(); ++i) {
+            uint64 id = handler.providerIds(i);
+            assertEq(
+                instance.getProvider(id).lastProvenPlusOne,
+                handler.lastProvenGhost(id),
+                "I16: untracked lastProven change"
+            );
         }
     }
 
