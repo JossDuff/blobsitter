@@ -48,6 +48,20 @@ contract BlobsitterInstance {
     error NotUnbonding(uint64 providerId);
     error UnbondingDelayActive(uint64 until);
     error OpenChallengesRemain(uint32 count);
+    error ChallengeWindowClosed();
+    error NoIndices();
+    error TooManyIndices(uint16 max);
+    error IndexOutOfRange(uint64 index, uint64 leafCount);
+    error BondTooSmall(uint256 required);
+    error UnknownChallenge(uint64 challengeId);
+    error AlreadyResolved(uint64 challengeId);
+    error ResponseWindowClosed(uint64 deadline);
+    error ResponseWindowStillOpen(uint64 deadline);
+    error IndicesMismatch();
+    error ProofCountMismatch(uint256 expected);
+    error PinMismatch();
+    error InvalidInclusionProof(uint256 sampleIndex);
+    error ProviderSlashed(uint64 providerId);
 
     // ---------------------------------------------------------------------------
     // §12.8 events (publication subset) — the daemon's contract surface.
@@ -69,6 +83,18 @@ contract BlobsitterInstance {
     event Withdrawn(uint64 indexed providerId);
     event Announced(string url);
     event Retracted();
+    event ChallengeOpened(
+        uint64 indexed challengeId,
+        uint64 indexed providerId,
+        uint64[] indices,
+        uint256 bond,
+        bytes32 pinnedRoot,
+        uint64 pinnedLeafCount,
+        uint64 deadline
+    );
+    event ChallengeAnswered(uint64 indexed challengeId);
+    event ChallengeRefunded(uint64 indexed challengeId);
+    event Slashed(uint64 indexed providerId, SlashCause cause, address executor);
 
     // ---------------------------------------------------------------------------
     // §11 EIP-712. Typehash strings are exact and single-line (§11.2 wraps them for
@@ -207,6 +233,42 @@ contract BlobsitterInstance {
 
     uint64 public nextProviderId = 1; // §9: providerId 0 means "none", never assigned
     mapping(uint64 => Provider) internal providers;
+
+    // ---------------------------------------------------------------------------
+    // §12.2 challenge state.
+    // ---------------------------------------------------------------------------
+
+    enum SlashCause {
+        CHALLENGE_TIMEOUT,
+        LAPSE // custody lapse — arrives in milestone 3
+    }
+
+    struct Challenge {
+        uint64 providerId;
+        address challenger;
+        uint256 bond;
+        uint64 openedAt;
+        bytes32 pinnedRoot; // Root(n, peaks) at open — or the provider's exitRoot
+        uint64 pinnedLeafCount;
+        bytes32 indicesHash; // keccak256(abi.encodePacked(uint64[] indices))
+        uint16 k;
+        bool resolved;
+    }
+
+    /// §7.2 response carrier: the raw chunk plus its sibling path, bottom level first.
+    struct ChunkProof {
+        bytes31 chunk;
+        bytes32[] path;
+    }
+
+    uint64 public nextChallengeId;
+    mapping(uint64 => Challenge) internal challengeRecords;
+
+    /// Slash remainders (stake − bounty) held by the instance.
+    /// TODO(M4): route through paymaster.absorbSlash() once the constructor deploys
+    /// the paymaster (§12.7, §15.1); this accumulator then disappears. Revisit before
+    /// any deployment freeze.
+    uint256 public pendingSlashRemainders;
 
     constructor(Params memory p) {
         publisher = p.publisher;
@@ -498,6 +560,143 @@ contract BlobsitterInstance {
     function _provider(uint64 providerId) internal view returns (Provider storage p) {
         p = providers[providerId];
         if (p.status == ProviderStatus.NONE) revert UnknownProvider(providerId);
+    }
+
+    // ---------------------------------------------------------------------------
+    // §12.5 challenges.
+    // ---------------------------------------------------------------------------
+
+    /// The full challenge record.
+    function getChallenge(uint64 challengeId) external view returns (Challenge memory) {
+        return challengeRecords[challengeId];
+    }
+
+    /// Open a possession challenge against a provider. Pin: the CURRENT root for an
+    /// ACTIVE provider, the exit snapshot for an in-window UNBONDING one (an exiting
+    /// provider is never answerable for post-initiation data). Duplicate indices are
+    /// permitted — they only waste the challenger's bond.
+    function challenge(uint64 providerId, uint64[] calldata indices)
+        external
+        payable
+        returns (uint64 challengeId)
+    {
+        Provider storage p = _provider(providerId);
+        bytes32 pinnedRoot;
+        uint64 pinnedLeafCount;
+        if (p.status == ProviderStatus.ACTIVE) {
+            pinnedRoot = MMR.bagRoot(leafCount, peaks);
+            pinnedLeafCount = leafCount;
+        } else if (
+            p.status == ProviderStatus.UNBONDING && block.timestamp < p.unbondingAt + unbondingDelay
+        ) {
+            pinnedRoot = p.exitRoot;
+            pinnedLeafCount = p.exitLeafCount;
+        } else {
+            revert ChallengeWindowClosed();
+        }
+
+        if (indices.length == 0) revert NoIndices();
+        if (indices.length > maxSample) revert TooManyIndices(maxSample);
+        for (uint256 j = 0; j < indices.length; ++j) {
+            if (indices[j] >= pinnedLeafCount) {
+                revert IndexOutOfRange(indices[j], pinnedLeafCount);
+            }
+        }
+        // Bond: BOND_MULTIPLIER × the worst-case response gas at the current basefee.
+        uint256 required = BOND_MULTIPLIER
+            * (indices.length * RESPONSE_GAS_PER_CHUNK + RESPONSE_BASE_GAS) * block.basefee;
+        if (msg.value < required) revert BondTooSmall(required);
+
+        challengeId = nextChallengeId++;
+        Challenge storage c = challengeRecords[challengeId];
+        c.providerId = providerId;
+        c.challenger = msg.sender;
+        c.bond = msg.value;
+        c.openedAt = uint64(block.timestamp);
+        c.pinnedRoot = pinnedRoot;
+        c.pinnedLeafCount = pinnedLeafCount;
+        c.indicesHash = keccak256(abi.encodePacked(indices));
+        c.k = uint16(indices.length);
+        p.openChallenges += 1;
+        emit ChallengeOpened(
+            challengeId,
+            providerId,
+            indices,
+            msg.value,
+            pinnedRoot,
+            pinnedLeafCount,
+            uint64(block.timestamp) + responseWindow
+        );
+    }
+
+    /// Answer a challenge with the raw chunks and §7.2 inclusion proofs against the
+    /// pinned state, whose peak list arrives as calldata and is re-bagged against the
+    /// stored one-word pin. Full index set in one call; an invalid response reverts and
+    /// the challenge stays open (no partial credit).
+    function respond(
+        uint64 challengeId,
+        uint64[] calldata indices,
+        uint64 n,
+        bytes32[] calldata pinnedPeaks,
+        ChunkProof[] calldata proofs
+    ) external {
+        Challenge storage c = _challenge(challengeId);
+        Provider storage p = providers[c.providerId];
+        // Guard order per §12.5: operator; window; unresolved; not slashed.
+        if (msg.sender != p.operator) revert NotOperator(c.providerId);
+        uint64 deadline = c.openedAt + responseWindow;
+        if (block.timestamp >= deadline) revert ResponseWindowClosed(deadline);
+        if (c.resolved) revert AlreadyResolved(challengeId);
+        if (p.status == ProviderStatus.SLASHED) revert ProviderSlashed(c.providerId);
+
+        if (proofs.length != c.k) revert ProofCountMismatch(c.k);
+        if (keccak256(abi.encodePacked(indices)) != c.indicesHash) revert IndicesMismatch();
+        bytes32[] memory peaksMem = pinnedPeaks;
+        if (n != c.pinnedLeafCount || MMR.bagRoot(n, peaksMem) != c.pinnedRoot) {
+            revert PinMismatch();
+        }
+        for (uint256 j = 0; j < proofs.length; ++j) {
+            if (!MMR.verify(proofs[j].chunk, indices[j], proofs[j].path, n, peaksMem)) {
+                revert InvalidInclusionProof(j);
+            }
+        }
+
+        c.resolved = true;
+        p.openChallenges -= 1;
+        emit ChallengeAnswered(challengeId);
+        // Bond to the OPERATOR: it compensates response gas the hot wallet paid, and
+        // keeps the hot wallet fueled without touching cold keys (§12.5).
+        _payout(p.operator, c.bond);
+    }
+
+    /// Resolve an unanswered challenge after its window: slash the provider (first
+    /// time) with the bounty to the challenger, or refund only (provider already
+    /// slashed — watchdogs aren't punished for piling onto a dying provider).
+    function resolveTimeout(uint64 challengeId) external {
+        Challenge storage c = _challenge(challengeId);
+        if (c.resolved) revert AlreadyResolved(challengeId);
+        uint64 deadline = c.openedAt + responseWindow;
+        if (block.timestamp < deadline) revert ResponseWindowStillOpen(deadline);
+
+        Provider storage p = providers[c.providerId];
+        c.resolved = true;
+        p.openChallenges -= 1;
+        if (p.status != ProviderStatus.SLASHED) {
+            p.status = ProviderStatus.SLASHED;
+            uint256 bounty = (stakeWei * bountyBps) / 10_000;
+            // Remainder held pending the paymaster (see pendingSlashRemainders TODO).
+            pendingSlashRemainders += stakeWei - bounty;
+            emit Slashed(c.providerId, SlashCause.CHALLENGE_TIMEOUT, msg.sender);
+            _payout(c.challenger, bounty + c.bond); // bounty + bond refund
+        } else {
+            emit ChallengeRefunded(challengeId);
+            _payout(c.challenger, c.bond);
+        }
+    }
+
+    function _challenge(uint64 challengeId) internal view returns (Challenge storage c) {
+        c = challengeRecords[challengeId];
+        if (c.challenger == address(0)) revert UnknownChallenge(challengeId);
     }
 
     // ---------------------------------------------------------------------------
