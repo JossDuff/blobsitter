@@ -220,6 +220,109 @@ contract CustodyTest is InstanceTestBase {
         assertEq(fresh.getProvider(id).lastProvenPlusOne, 1, "vacuously proven");
     }
 
+    // ------------------------------------------------------------------------ lapse
+
+    /// The full health timeline of a provider who stops proving after period 0:
+    /// CURRENT through the grace of the first miss, STALE after one full missed
+    /// period, LAPSE_ELIGIBLE (provider-curable only) once the second miss completes,
+    /// LAPSABLE — and slashable by anyone — one grace window later.
+    function test_lapse_statusWalkAndBoundaries() public {
+        uint64 t0 = uint64(block.timestamp); // == anchor
+        _begin();
+        vm.prank(OPERATOR);
+        instance.submitProof(pid, goodProof); // period 0 proven; q = 0
+
+        // Misses accumulate: eligibility opens when period q+3 starts, i.e. 3 whole
+        // periods after anchor; public slashability one grace window later.
+        uint64 eligibleAt = t0 + uint64(90 days);
+        uint64 lapsableAt = eligibleAt + uint64(7 days);
+
+        vm.warp(t0 + 35 days); // period 1 (unproven, still current: p == q+1)
+        assertEq(
+            uint8(instance.custodyStatus(pid)), uint8(BlobsitterInstance.CustodyStatus.CURRENT)
+        );
+        vm.expectRevert(abi.encodeWithSelector(BlobsitterInstance.NotLapsable.selector, 0));
+        instance.lapse(pid);
+
+        vm.warp(t0 + 65 days); // period 2: one full period missed
+        assertEq(uint8(instance.custodyStatus(pid)), uint8(BlobsitterInstance.CustodyStatus.STALE));
+        vm.expectRevert(abi.encodeWithSelector(BlobsitterInstance.NotLapsable.selector, 0));
+        instance.lapse(pid);
+
+        vm.warp(eligibleAt); // period 3 begins: two consecutive misses complete
+        assertEq(
+            uint8(instance.custodyStatus(pid)),
+            uint8(BlobsitterInstance.CustodyStatus.LAPSE_ELIGIBLE)
+        );
+        vm.expectRevert(abi.encodeWithSelector(BlobsitterInstance.NotLapsable.selector, lapsableAt));
+        instance.lapse(pid); // grace: only the provider can act
+
+        vm.warp(lapsableAt - 1);
+        vm.expectRevert(abi.encodeWithSelector(BlobsitterInstance.NotLapsable.selector, lapsableAt));
+        instance.lapse(pid);
+
+        vm.warp(lapsableAt);
+        assertEq(
+            uint8(instance.custodyStatus(pid)), uint8(BlobsitterInstance.CustodyStatus.LAPSABLE)
+        );
+        uint256 bounty = (2 ether * 1500) / 10_000;
+        vm.expectEmit(address(instance));
+        emit BlobsitterInstance.Slashed(pid, BlobsitterInstance.SlashCause.LAPSE, address(this));
+        instance.lapse(pid);
+
+        assertEq(address(this).balance, 10 ether - 2 ether + bounty, "bounty to the executor");
+        assertEq(instance.pendingSlashRemainders(), 2 ether - bounty, "remainder held");
+        assertEq(
+            uint8(instance.getProvider(pid).status),
+            uint8(BlobsitterInstance.ProviderStatus.SLASHED)
+        );
+        assertEq(
+            uint8(instance.custodyStatus(pid)),
+            uint8(BlobsitterInstance.CustodyStatus.NONE),
+            "slashed providers have no custody status"
+        );
+    }
+
+    /// An accepted proof at any point before lapse() executes resets the clock —
+    /// cure always wins if it lands first, even deep into the grace window.
+    function test_lapse_cureDuringGraceWins() public {
+        uint64 t0 = uint64(block.timestamp);
+        // Nothing ever proven: periods 0 and 1 missed at day 60, grace runs to day 67.
+        vm.warp(t0 + 62 days); // mid-grace
+        assertEq(
+            uint8(instance.custodyStatus(pid)),
+            uint8(BlobsitterInstance.CustodyStatus.LAPSE_ELIGIBLE)
+        );
+
+        _begin(); // cure through the escape hatch, mid-grace
+        BlobsitterInstance.ChunkProof[] memory reveals = _revealsFor(SEED, 50);
+        (bytes32[] memory peaks,) = TestVec.buildPeaks(50);
+        vm.prank(OPERATOR);
+        instance.submitProofEscape(pid, 50, peaks, reveals);
+
+        assertEq(
+            uint8(instance.custodyStatus(pid)), uint8(BlobsitterInstance.CustodyStatus.CURRENT)
+        );
+        vm.expectRevert(abi.encodeWithSelector(BlobsitterInstance.NotLapsable.selector, 0));
+        instance.lapse(pid);
+    }
+
+    /// Unbonding ends custody obligations; slashed providers cannot be slashed again.
+    function test_lapse_immunity() public {
+        vm.warp(block.timestamp + 200 days); // long past any grace
+        vm.prank(OPERATOR);
+        instance.initiateUnbonding(pid);
+        vm.expectRevert(abi.encodeWithSelector(BlobsitterInstance.NotActive.selector, pid));
+        instance.lapse(pid);
+        assertEq(uint8(instance.custodyStatus(pid)), uint8(BlobsitterInstance.CustodyStatus.NONE));
+
+        vm.expectRevert(abi.encodeWithSelector(BlobsitterInstance.UnknownProvider.selector, 99));
+        instance.lapse(99);
+    }
+
+    /// receive() so the lapse bounty push succeeds for this test contract.
+    receive() external payable {}
+
     // ------------------------------------------------------------ vector conformance
 
     /// The on-chain index derivation must reproduce vectors/custody_indices.json

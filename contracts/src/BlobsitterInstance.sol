@@ -698,6 +698,67 @@ contract BlobsitterInstance {
         emit CustodyProven(providerId, period, degraded);
     }
 
+    /// A provider's derived custody health. Never stored — computed from the period
+    /// arithmetic on demand. Meanings: CURRENT — no completed period unproven; STALE —
+    /// one completed period missed (informational); LAPSE_ELIGIBLE — two consecutive
+    /// misses, but inside the grace window where only the provider can act; LAPSABLE —
+    /// anyone may slash via lapse(). NONE — the provider is not ACTIVE (unbonding,
+    /// exited, slashed, or unknown ids have no custody obligations).
+    enum CustodyStatus {
+        NONE,
+        CURRENT,
+        STALE,
+        LAPSE_ELIGIBLE,
+        LAPSABLE
+    }
+
+    function custodyStatus(uint64 providerId) external view returns (CustodyStatus) {
+        Provider storage p = providers[providerId];
+        if (p.status != ProviderStatus.ACTIVE) return CustodyStatus.NONE;
+        uint64 period = uint64((block.timestamp - p.anchor) / custodyPeriod);
+        // q is the last proven period, one-off-stored so that 0 encodes "none yet".
+        if (period + 1 <= p.lastProvenPlusOne + 1) return CustodyStatus.CURRENT; // p <= q+1
+        if (period + 1 == p.lastProvenPlusOne + 2) return CustodyStatus.STALE; // p == q+2
+        // Two consecutive misses: the clock to public slashing started when the second
+        // missed period completed.
+        (, uint256 lapsableAt) = _lapseTimes(p);
+        return block.timestamp < lapsableAt ? CustodyStatus.LAPSE_ELIGIBLE : CustodyStatus.LAPSABLE;
+    }
+
+    /// Slash a provider who has missed two consecutive custody periods and let the
+    /// grace window pass uncured. Anyone may call; the bounty pays the caller and the
+    /// remainder is held for the future paymaster. An accepted proof at ANY point
+    /// before this executes resets the clock — cure always wins if it lands first.
+    function lapse(uint64 providerId) external {
+        Provider storage p = _provider(providerId);
+        // Unbonding and slashed providers are immune: their custody obligations ended.
+        if (p.status != ProviderStatus.ACTIVE) revert NotActive(providerId);
+        (uint256 eligibleAt, uint256 lapsableAt) = _lapseTimes(p);
+        if (block.timestamp < eligibleAt) revert NotLapsable(0); // not even two misses yet
+        if (block.timestamp < lapsableAt) revert NotLapsable(uint64(lapsableAt)); // grace
+
+        p.status = ProviderStatus.SLASHED;
+        uint256 bounty = (stakeWei * bountyBps) / 10_000;
+        // Remainder held pending the paymaster (see pendingSlashRemainders TODO).
+        pendingSlashRemainders += stakeWei - bounty;
+        emit Slashed(providerId, SlashCause.LAPSE, msg.sender);
+        _payout(msg.sender, bounty);
+    }
+
+    /// The two lapse thresholds: eligibility opens the instant the second consecutive
+    /// missed period completes (anchor + (lastProven + 3) whole periods), and public
+    /// slashability follows one grace window later. uint256 math so absurd constructor
+    /// parameters cannot overflow the products.
+    function _lapseTimes(Provider storage p)
+        private
+        view
+        returns (uint256 eligibleAt, uint256 lapsableAt)
+    {
+        // lastProvenPlusOne stores q+1, so q+3 whole periods is lastProvenPlusOne + 2.
+        eligibleAt = uint256(p.anchor) + (uint256(p.lastProvenPlusOne) + 2) * uint256(custodyPeriod);
+        lapsableAt = eligibleAt + lapseGrace;
+    }
+
     /// The custody circuit's public-input byte layout is deliberately not yet
     /// specified, and inventing one is forbidden — a silent guess becomes permanent.
     /// Until the circuit spec is written this returns empty bytes and the mock
