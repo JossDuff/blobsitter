@@ -15,3 +15,5 @@ sp1-sdk = "6.3.1"
 blobsitter-circuits-common = { path = "../common" }
 blobsitter-reference = { path = "../../reference" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+dotenvy = "0.15"
+serde_json = "1"
