@@ -68,6 +68,21 @@ contract FixtureKzgTest is InstanceTestBase {
         (BlobsitterInstance.Declaration memory d, BlobsitterInstance.BlobOpening[] memory o) =
             _fixtureDeclaration();
         vm.blobhashes(d.blobVersionedHashes);
+
+        // End-to-end public-values conformance: the verifier must receive exactly the
+        // circuit-spec encoding — the preimage hash followed by c-kzg's real evaluation.
+        bytes32 preimageHash = fx.fsPreimageHash(
+            d.blobVersionedHashes,
+            json.readBytes32Array(".priorPeaks"),
+            d.newSubtreePeaks,
+            uint64(json.readUint(".priorLeafCount")),
+            d.newLeafCount
+        );
+        bytes memory pv = abi.encodePacked(preimageHash, json.readBytes32(".y"));
+        vm.expectCall(
+            fx.SP1_VERIFIER(),
+            abi.encodeCall(ISP1VerifierFixture.verifyProof, (fx.EQUIVALENCE_VKEY(), pv, goodProof))
+        );
         fx.declareFor(d, _sign(fx.declarationDigest(d)), o, goodProof);
 
         assertEq(fx.leafCount(), d.newLeafCount, "advanced");
@@ -88,4 +103,11 @@ contract FixtureKzgTest is InstanceTestBase {
         );
         fx.declareFor(d, sig, o, goodProof);
     }
+}
+
+/// Minimal mirror of the verifier ABI for vm.expectCall encoding.
+interface ISP1VerifierFixture {
+    function verifyProof(bytes32 vkey, bytes calldata publicValues, bytes calldata proof)
+        external
+        view;
 }

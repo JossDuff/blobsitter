@@ -387,7 +387,23 @@ contract BlobsitterInstance is PayoutSink {
         uint64 priorLeafCount,
         uint64 newLeafCount
     ) public view returns (bytes32) {
-        bytes32 h = keccak256(
+        bytes32 h = fsPreimageHash(
+            blobVersionedHashes, priorPeaks, newSubtreePeaks, priorLeafCount, newLeafCount
+        );
+        return bytes32(uint256(h) % BLS_MODULUS);
+    }
+
+    /// The pre-reduction hash of the same preimage: z is its reduction into Fr, and the
+    /// equivalence circuit's public values commit to the hash itself — binding it binds
+    /// z and every field the preimage carries.
+    function fsPreimageHash(
+        bytes32[] memory blobVersionedHashes,
+        bytes32[] memory priorPeaks,
+        bytes32[] memory newSubtreePeaks,
+        uint64 priorLeafCount,
+        uint64 newLeafCount
+    ) public view returns (bytes32) {
+        return keccak256(
             abi.encodePacked(
                 bytes1(0x03),
                 address(this),
@@ -398,7 +414,6 @@ contract BlobsitterInstance is PayoutSink {
                 newLeafCount
             )
         );
-        return bytes32(uint256(h) % BLS_MODULUS);
     }
 
     // ---------------------------------------------------------------------------
@@ -446,15 +461,21 @@ contract BlobsitterInstance is PayoutSink {
 
         // Check 3: every blob opens to its claimed value at the Fiat–Shamir point.
         bytes32[] memory priorPeaks = peaks;
-        bytes32 z =
-            fiatShamirZ(d.blobVersionedHashes, priorPeaks, d.newSubtreePeaks, n0, d.newLeafCount);
+        bytes32 preimageHash = fsPreimageHash(
+            d.blobVersionedHashes, priorPeaks, d.newSubtreePeaks, n0, d.newLeafCount
+        );
+        bytes32 z = bytes32(uint256(preimageHash) % BLS_MODULUS);
         for (uint256 j = 0; j < blobCount; ++j) {
             _verifyOpening(d.blobVersionedHashes[j], z, openings[j], j);
         }
 
-        // Check 4: the equivalence proof (blob bytes ⇔ submitted subtree roots).
+        // Check 4: the equivalence proof (blob bytes ⇔ submitted subtree roots). Its
+        // public values bind the same preimage hash and the same evaluations the
+        // precompile just verified.
         try ISP1Verifier(SP1_VERIFIER)
-            .verifyProof(EQUIVALENCE_VKEY, _equivalencePublicValues(), equivalenceProof) {}
+            .verifyProof(
+                EQUIVALENCE_VKEY, _equivalencePublicValues(preimageHash, openings), equivalenceProof
+            ) {}
         catch {
             revert InvalidEquivalenceProof();
         }
@@ -654,7 +675,10 @@ contract BlobsitterInstance is PayoutSink {
     function submitProof(uint64 providerId, bytes calldata proof) external {
         Provider storage p = _provider(providerId);
         uint64 period = _submitGuards(p, providerId);
-        try ISP1Verifier(SP1_VERIFIER).verifyProof(CUSTODY_VKEY, _custodyPublicValues(), proof) {}
+        bytes memory pv = encodeCustodyPublicValues(
+            providerId, p.commitSeed, p.commitRoot, p.commitLeafCount, uint64(custodyK)
+        );
+        try ISP1Verifier(SP1_VERIFIER).verifyProof(CUSTODY_VKEY, pv, proof) {}
         catch {
             revert InvalidCustodyProof();
         }
@@ -774,15 +798,16 @@ contract BlobsitterInstance is PayoutSink {
         lapsableAt = eligibleAt + lapseGrace;
     }
 
-    /// The custody circuit's public-input byte layout is deliberately not yet
-    /// specified, and inventing one is forbidden — a silent guess becomes permanent.
-    /// Until the circuit spec is written this returns empty bytes and the mock
-    /// verifier validates only (vkey, proof).
-    /// TODO(spec): encode the custody statement's public values exactly as specified
-    /// (they bind instance, providerId, seed, root, leafCount, and the sample count).
-    /// This function body is the only place that changes; no call site moves.
-    function _custodyPublicValues() private pure returns (bytes memory) {
-        return "";
+    /// Custody public values: the packed 108-byte tuple binding this instance, the
+    /// provider, and the committed snapshot plus the sample count.
+    function encodeCustodyPublicValues(
+        uint64 providerId,
+        bytes32 seed,
+        bytes32 root,
+        uint64 leafCount,
+        uint64 k
+    ) public view returns (bytes memory) {
+        return abi.encodePacked(address(this), providerId, seed, root, leafCount, k);
     }
 
     // ---------------------------------------------------------------------------
@@ -957,15 +982,29 @@ contract BlobsitterInstance is PayoutSink {
         if (!ok) revert PointEvaluationFailed(blobIndex);
     }
 
-    /// The circuit's public-input byte layout is deliberately not yet specified, and
-    /// inventing an encoding is forbidden — a silent guess becomes permanent. Until the
-    /// spec defines the layout, the instance passes empty publicValues and the mock
-    /// verifier validates only (vkey, proof).
-    /// TODO(spec): once the layout is written, encode the equivalence statement's public
-    /// values exactly as specified. This function body is the only place that changes;
-    /// no call site moves.
-    function _equivalencePublicValues() private pure returns (bytes memory) {
-        return "";
+    /// Equivalence public values: the preimage hash followed by each blob's claimed
+    /// evaluation — exactly what the guest commits.
+    function _equivalencePublicValues(bytes32 preimageHash, BlobOpening[] calldata openings)
+        private
+        pure
+        returns (bytes memory pv)
+    {
+        pv = abi.encodePacked(preimageHash);
+        for (uint256 j = 0; j < openings.length; ++j) {
+            pv = bytes.concat(pv, openings[j].y);
+        }
+    }
+
+    /// The same encoding as a public helper for tooling and conformance tests.
+    function encodeEquivalencePublicValues(bytes32 preimageHash, bytes32[] calldata ys)
+        external
+        pure
+        returns (bytes memory pv)
+    {
+        pv = abi.encodePacked(preimageHash);
+        for (uint256 j = 0; j < ys.length; ++j) {
+            pv = bytes.concat(pv, ys[j]);
+        }
     }
 
     /// The gas the reimbursement bracket cannot measure: the paymaster call itself,

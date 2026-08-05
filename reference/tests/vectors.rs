@@ -250,6 +250,65 @@ fn eip712_vectors() {
 }
 
 #[test]
+fn public_values_vectors() {
+    use blobsitter_reference::{blob, public_values, update_subtree_roots};
+
+    let v = load("public_values.json");
+    let fsz = load("fs_z.json");
+
+    // Equivalence: rebuild the fs_z declaration's preimage hash, blob, and evaluation.
+    let eq = &v["equivalence"];
+    let instance: [u8; 20] = from_hex(fsz["instance"].as_str().unwrap()).try_into().unwrap();
+    let n0 = fsz["priorLeafCount"].as_u64().unwrap();
+    let n1 = fsz["newLeafCount"].as_u64().unwrap();
+    let vhs = hashes(&fsz["blobVersionedHashes"]);
+    let prior = testvec::build(n0).peaks();
+    let chunks: Vec<_> = (n0..n1).map(testvec::chunk).collect();
+
+    // The declared subtree peaks must be derivable from the raw chunks — the content
+    // half of the circuit statement.
+    let subtrees = update_subtree_roots(n0, &chunks);
+    assert_eq!(subtrees, hashes(&fsz["newSubtreePeaks"]), "content: chunks -> subtree roots");
+
+    let preimage = fs_z_preimage(&instance, &vhs, &prior, &subtrees, n0, n1);
+    let preimage_hash = keccak256(&preimage);
+    assert_eq!(preimage_hash, hash(&eq["preimageHash"]), "preimage hash");
+
+    // The evaluation half: the pattern blob at z, against the Python-computed vector.
+    let elements = blob::elements_from_chunks(&chunks);
+    let z = fs_z(&instance, &vhs, &prior, &subtrees, n0, n1);
+    let y = blob::barycentric_eval(&elements, &z);
+    assert_eq!(y, hash(&eq["y"]), "barycentric y (Rust vs Python)");
+
+    let pv = public_values::equivalence(&preimage_hash, &[y]);
+    assert_eq!(hex_of(&pv), eq["publicValues"].as_str().unwrap(), "equivalence layout");
+
+    // A domain point sanity check: evaluating at domain element 0 returns element 0.
+    let domain = blob::bit_reversed_domain();
+    let mut w0 = [0u8; 32];
+    let b = domain[0].to_bytes_be();
+    w0[32 - b.len()..].copy_from_slice(&b);
+    assert_eq!(
+        blob::barycentric_eval(&elements, &w0),
+        elements[0],
+        "on-domain evaluation shortcut"
+    );
+
+    // Custody: pure layout.
+    let cu = &v["custody"];
+    let ci: [u8; 20] = from_hex(cu["instance"].as_str().unwrap()).try_into().unwrap();
+    let pv = public_values::custody(
+        &ci,
+        cu["providerId"].as_u64().unwrap(),
+        &hash(&cu["seed"]),
+        &hash(&cu["root"]),
+        cu["leafCount"].as_u64().unwrap(),
+        cu["k"].as_u64().unwrap(),
+    );
+    assert_eq!(hex_of(&pv), cu["publicValues"].as_str().unwrap(), "custody layout");
+}
+
+#[test]
 fn custody_index_vectors() {
     let v = load("custody_indices.json");
     let instance: [u8; 20] = from_hex(v["instance"].as_str().unwrap()).try_into().unwrap();

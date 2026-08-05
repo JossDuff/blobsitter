@@ -54,6 +54,14 @@ and bonded storage providers accountable via challenges and slashing.
 - `ETH_RPC_URL=<url> forge test --match-path "test/fork/*"` (from `contracts/`) — the
   Layer-4 mainnet-fork tests (precompile parity, real-Safe ERC-1271). They self-skip
   without the URL; CI runs them once the `ETH_RPC_URL` repo secret is configured.
+- `cargo test --manifest-path circuits/Cargo.toml` — the guest logic natively against
+  the vectors (no SP1 toolchain; this is what CI runs).
+- Executor benchmarks / vkeys (local only; needs `sp1up` + `cargo prove build` in each
+  guest dir first): from `circuits/script/`, `cargo run --release --bin execute --
+  <equivalence|custody> [smoke|full]` and `--bin vkey`. Results and conditions are
+  recorded in `circuits/BENCHMARKS.md`. Building `circuits/script` also needs a protoc
+  with the well-known-type includes (v21+; distro 3.x fails with "empty.proto not
+  found") — grab a protoc release and point `PROTOC=<path>/bin/protoc` at it.
 
 ## Layout
 
@@ -68,7 +76,12 @@ and bonded storage providers accountable via challenges and slashing.
   mock SP1 verifier for the real one once the circuit spec is written.
 - `tools/kzg-fixture/` — generates the real-KZG test fixture from c-kzg's embedded
   Ethereum setup (no ceremony is ever run by or for this protocol).
-- Planned: `circuits/` (SP1), `daemon/`, `carrier/`, `publisher/`.
+- `circuits/` — the SP1 circuits: `common/` holds ALL guest logic as a host-buildable
+  library (native tests, no toolchain); `equivalence/` and `custody/` are thin guest
+  wrappers (standalone workspaces, committed lockfiles — determinism is what the vkeys
+  hash); `script/` is host tooling (executor benches, vkey derivation). Proving is
+  deferred to the network-spike milestone.
+- Planned: `daemon/`, `carrier/`, `publisher/`.
 
 ## Working rules
 

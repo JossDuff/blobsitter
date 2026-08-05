@@ -1,0 +1,19 @@
+{
+  "_spec": "normative.md \u00a714",
+  "equivalence": {
+    "_derivation": "the fs_z.json declaration; blob = pattern chunks 5..7 + zeros",
+    "preimageHash": "0x2fc0b6ad1b4e9082310fb69ac19369991e599a20b0add77e4735d51b986a9186",
+    "z": "0x2fc0b6ad1b4e9082310fb69ac19369991e599a20b0add77e4735d51b986a9186",
+    "y": "0x5bbf5d278a1c91d27b0d30c9b3454ed202625a0e05d03b4eb44bead852781599",
+    "publicValues": "0x2fc0b6ad1b4e9082310fb69ac19369991e599a20b0add77e4735d51b986a91865bbf5d278a1c91d27b0d30c9b3454ed202625a0e05d03b4eb44bead852781599"
+  },
+  "custody": {
+    "instance": "0x00112233445566778899aabbccddeeff00112233",
+    "providerId": 7,
+    "seed": "0xc0ef9d947b94f48d5b0e47e1d6988c79f582c709a75365b5ae73cb0ba70fc994",
+    "root": "0x8bbac26bf94f0cb4b0d273ebc381db9d2318ab0e8f00fe47e441b9ca83c6de1b",
+    "leafCount": 1000003,
+    "k": 16384,
+    "publicValues": "0x00112233445566778899aabbccddeeff001122330000000000000007c0ef9d947b94f48d5b0e47e1d6988c79f582c709a75365b5ae73cb0ba70fc9948bbac26bf94f0cb4b0d273ebc381db9d2318ab0e8f00fe47e441b9ca83c6de1b00000000000f42430000000000004000"
+  }
+}

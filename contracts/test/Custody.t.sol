@@ -101,11 +101,15 @@ contract CustodyTest is InstanceTestBase {
 
     function test_submitProof() public {
         _begin();
-        // The verifier must be called with the custody vkey, the (deliberately
-        // still-empty) public values, and the operator's proof bytes — exactly.
+        // The verifier must be called with the custody vkey, the real packed public
+        // values binding the committed snapshot, and the operator's proof — exactly.
+        bytes memory pv = abi.encodePacked(
+            address(instance), pid, SEED, instance.root(), uint64(50), uint64(16_384)
+        );
+        assertEq(pv, instance.encodeCustodyPublicValues(pid, SEED, instance.root(), 50, 16_384));
         vm.expectCall(
             instance.SP1_VERIFIER(),
-            abi.encodeCall(ISP1VerifierLike.verifyProof, (instance.CUSTODY_VKEY(), "", goodProof))
+            abi.encodeCall(ISP1VerifierLike.verifyProof, (instance.CUSTODY_VKEY(), pv, goodProof))
         );
         vm.expectEmit(address(instance));
         emit BlobsitterInstance.CustodyProven(pid, 0, false);

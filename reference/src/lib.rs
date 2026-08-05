@@ -278,6 +278,160 @@ pub fn custody_index(
     rem as u64
 }
 
+/// Root of a perfect subtree over an arbitrary (power-of-two-length) chunk slice —
+/// the publisher/circuit side of an update: real data, not the test pattern.
+pub fn chunk_subtree_root(chunks: &[Chunk]) -> Hash {
+    assert!(chunks.len().is_power_of_two(), "perfect subtrees only");
+    if chunks.len() == 1 {
+        return leaf(&chunks[0]);
+    }
+    let half = chunks.len() / 2;
+    node(&chunk_subtree_root(&chunks[..half]), &chunk_subtree_root(&chunks[half..]))
+}
+
+/// The declared subtree peaks for an update of `chunks` appended at prior leaf count
+/// `n0`: the decomposition's heights, each subtree hashed over its slice of the data.
+/// This is what the equivalence circuit must reproduce from the blob bytes.
+pub fn update_subtree_roots(n0: u64, chunks: &[Chunk]) -> Vec<Hash> {
+    let heights = decompose(n0, chunks.len() as u64);
+    let mut out = Vec::with_capacity(heights.len());
+    let mut off = 0usize;
+    for h in heights {
+        let size = 1usize << h;
+        out.push(chunk_subtree_root(&chunks[off..off + size]));
+        off += size;
+    }
+    debug_assert_eq!(off, chunks.len());
+    out
+}
+
+/// EIP-4844 blob evaluation (used by the equivalence circuit). A blob stores a
+/// polynomial by its evaluations over the 4096 roots of unity in Fr, in bit-reversed
+/// order; `barycentric_eval` evaluates it at an arbitrary point without ever forming
+/// coefficients: y = (z^4096 − 1)/4096 · Σ eᵢ·wᵢ/(z − wᵢ).
+pub mod blob {
+    use super::{BigUint, Chunk};
+
+    pub const FIELD_ELEMENTS_PER_BLOB: usize = 4096;
+
+    fn modulus() -> BigUint {
+        BigUint::parse_bytes(super::R_BLS_HEX.as_bytes(), 16).expect("valid modulus")
+    }
+
+    /// The canonical blob for local chunks of an update (single blob): byte 0 zero,
+    /// bytes 1..31 the chunk, zero elements beyond the data.
+    pub fn elements_from_chunks(chunks: &[Chunk]) -> Vec<[u8; 32]> {
+        assert!(chunks.len() <= FIELD_ELEMENTS_PER_BLOB);
+        let mut out = vec![[0u8; 32]; FIELD_ELEMENTS_PER_BLOB];
+        for (i, c) in chunks.iter().enumerate() {
+            out[i][1..].copy_from_slice(c);
+        }
+        out
+    }
+
+    /// The bit-reversed evaluation domain: 7 generates Fr*, so 7^((r−1)/4096) generates
+    /// the 4096th roots of unity; the consensus spec stores blobs over the bit-reversed
+    /// permutation of that subgroup.
+    pub fn bit_reversed_domain() -> Vec<BigUint> {
+        let r = modulus();
+        let root = BigUint::from(7u32).modpow(&((&r - 1u32) / 4096u32), &r);
+        let mut powers = Vec::with_capacity(FIELD_ELEMENTS_PER_BLOB);
+        let mut acc = BigUint::from(1u32);
+        for _ in 0..FIELD_ELEMENTS_PER_BLOB {
+            powers.push(acc.clone());
+            acc = acc * &root % &r;
+        }
+        (0..FIELD_ELEMENTS_PER_BLOB)
+            .map(|i| powers[(i as u16).reverse_bits() as usize >> 4].clone())
+            .collect()
+    }
+
+    /// Evaluate a blob at `z` (32-byte big-endian field element), returning y likewise.
+    pub fn barycentric_eval(elements: &[[u8; 32]], z: &[u8; 32]) -> [u8; 32] {
+        assert_eq!(elements.len(), FIELD_ELEMENTS_PER_BLOB);
+        let r = modulus();
+        let z = BigUint::from_bytes_be(z) % &r;
+        let domain = bit_reversed_domain();
+        let els: Vec<BigUint> = elements.iter().map(|e| BigUint::from_bytes_be(e)).collect();
+
+        // z on the domain: the evaluation is stored directly.
+        if let Some(i) = domain.iter().position(|w| *w == z) {
+            return to32(&els[i]);
+        }
+
+        // Montgomery batch inversion: invert all 4096 denominators (and the width)
+        // with a SINGLE Fermat inversion — per-term inversions would each cost a full
+        // modpow, which dominates guest cycle counts.
+        let mut denoms: Vec<BigUint> =
+            domain.iter().map(|w| (&r + &z - w) % &r).collect();
+        denoms.push(BigUint::from(4096u32));
+        let mut prefix = Vec::with_capacity(denoms.len() + 1);
+        prefix.push(BigUint::from(1u32));
+        for d in &denoms {
+            let last = prefix.last().unwrap() * d % &r;
+            prefix.push(last);
+        }
+        let two = BigUint::from(2u32);
+        let mut inv_all = prefix.last().unwrap().modpow(&(&r - &two), &r);
+        let mut invs = vec![BigUint::from(0u32); denoms.len()];
+        for i in (0..denoms.len()).rev() {
+            invs[i] = &prefix[i] * &inv_all % &r;
+            inv_all = inv_all * &denoms[i] % &r;
+        }
+        let inv_width = invs.pop().unwrap();
+
+        let mut acc = BigUint::from(0u32);
+        for ((e, w), d_inv) in els.iter().zip(domain.iter()).zip(invs.iter()) {
+            acc = (acc + e * w % &r * d_inv) % &r;
+        }
+        let z_pow = z.modpow(&BigUint::from(4096u32), &r);
+        let factor = (&r + &z_pow - 1u32) % &r * inv_width % &r;
+        to32(&(acc * factor % &r))
+    }
+
+    fn to32(x: &BigUint) -> [u8; 32] {
+        let b = x.to_bytes_be();
+        let mut out = [0u8; 32];
+        out[32 - b.len()..].copy_from_slice(&b);
+        out
+    }
+}
+
+/// Circuit public-value encodings (normative §14): fixed-width big-endian
+/// concatenation, no length prefixes. What the guests commit and the contract compares.
+pub mod public_values {
+    use super::Hash;
+
+    /// Equivalence: `H(z-preimage) ‖ y_0 ‖ … ‖ y_{B-1}`.
+    pub fn equivalence(preimage_hash: &Hash, ys: &[Hash]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32 + 32 * ys.len());
+        out.extend_from_slice(preimage_hash);
+        for y in ys {
+            out.extend_from_slice(y);
+        }
+        out
+    }
+
+    /// Custody: `A ‖ u64be(providerId) ‖ seed ‖ root ‖ u64be(leafCount) ‖ u64be(k)`.
+    pub fn custody(
+        instance: &[u8; 20],
+        provider_id: u64,
+        seed: &Hash,
+        root: &Hash,
+        leaf_count: u64,
+        k: u64,
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(108);
+        out.extend_from_slice(instance);
+        out.extend_from_slice(&provider_id.to_be_bytes());
+        out.extend_from_slice(seed);
+        out.extend_from_slice(root);
+        out.extend_from_slice(&leaf_count.to_be_bytes());
+        out.extend_from_slice(&k.to_be_bytes());
+        out
+    }
+}
+
 /// Test-data helpers shared by the vector tests and (later) the Rust vector generator.
 /// These implement the *publisher's* side: synthesizing chunks and computing the subtree
 /// roots that go into declarations. The chunk pattern is fixed by the normative spec so

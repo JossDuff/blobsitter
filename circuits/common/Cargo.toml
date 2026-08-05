@@ -1,0 +1,13 @@
+[package]
+name = "blobsitter-circuits-common"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The circuit guest logic as a host-buildable library, tested natively against the golden vectors"
+
+[dependencies]
+blobsitter-reference = { path = "../../reference" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

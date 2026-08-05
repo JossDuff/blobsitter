@@ -611,4 +611,83 @@ emit("eip712.json", {
     },
 })
 
+# --- public_values.json ------------------------------------------------------
+# The circuit public-input encodings (spec section 14): what each SP1 guest commits and
+# the contract compares against. The equivalence case reuses the fs_z.json declaration
+# and adds the barycentric evaluation y of the corresponding pattern blob at z --
+# computed here in pure Python as an implementation INDEPENDENT of both the Rust
+# reference and c-kzg (three-way triangulation; the Rust and c-kzg legs are asserted in
+# their own test suites). The custody case is a pure byte-layout vector (its root is an
+# arbitrary fixed value -- layout, not MMR consistency, is what it pins).
+
+# Barycentric evaluation of a blob at z, per the EIP-4844 consensus spec
+# (evaluate_polynomial_in_evaluation_form). A blob stores a polynomial by its
+# EVALUATIONS over the 4096 roots of unity in Fr, in bit-reversed order; evaluating at
+# an arbitrary z uses the barycentric formula
+#     y = (z^4096 - 1)/4096 * sum_i( e_i * w_i / (z - w_i) )
+# so no coefficient form is ever materialized.
+_W = 4096
+_ROOT_OF_UNITY = pow(7, (R_BLS - 1) // _W, R_BLS)  # 7 generates Fr*, per the consensus spec
+
+
+def _bit_reversed_domain():
+    roots = [pow(_ROOT_OF_UNITY, i, R_BLS) for i in range(_W)]
+    return [roots[int(format(i, "012b")[::-1], 2)] for i in range(_W)]
+
+
+_DOMAIN = _bit_reversed_domain()
+# The domain must be a complete multiplicative subgroup: w^4096 == 1, all distinct.
+assert pow(_ROOT_OF_UNITY, _W, R_BLS) == 1 and pow(_ROOT_OF_UNITY, _W // 2, R_BLS) != 1
+assert len(set(_DOMAIN)) == _W
+
+
+def eval_blob_at(elements, z):
+    """Evaluate a blob (list of 4096 field-element ints, bit-reversed evaluation form)
+    at point z."""
+    z %= R_BLS
+    for e, w in zip(elements, _DOMAIN):
+        if z == w:
+            return e
+    acc = 0
+    for e, w in zip(elements, _DOMAIN):
+        acc = (acc + e * w * pow(z - w, R_BLS - 2, R_BLS)) % R_BLS
+    return acc * (pow(z, _W, R_BLS) - 1) % R_BLS * pow(_W, R_BLS - 2, R_BLS) % R_BLS
+
+
+# Equivalence: the fs_z declaration's blob is pattern chunks 5..7 in elements 0..2
+# (byte 0 zero, bytes 1..31 the chunk), zeros beyond -- the canonical form the circuit
+# enforces.
+_elements = [int.from_bytes(b"\x00" + chunk(5 + u), "big") for u in range(3)] + [0] * (_W - 3)
+_pv_y = eval_blob_at(_elements, z)
+_preimage_hash = keccak256(preimage)
+# Sanity: z was defined as the reduction of exactly this hash.
+assert int.from_bytes(_preimage_hash, "big") % R_BLS == z
+_equiv_pv = _preimage_hash + _pv_y.to_bytes(32, "big")
+
+# Custody: layout-only -- the packed 108-byte tuple.
+_cust_root = keccak256(b"vector custody root")
+_cust_pv = (instance + u64be(provider_id) + seed + _cust_root
+            + u64be(leaf_count) + u64be(16_384))
+assert len(_cust_pv) == 108 and len(_equiv_pv) == 64
+
+emit("public_values.json", {
+    "_spec": "normative.md §14",
+    "equivalence": {
+        "_derivation": "the fs_z.json declaration; blob = pattern chunks 5..7 + zeros",
+        "preimageHash": hx(_preimage_hash),
+        "z": hex(z),
+        "y": hx(_pv_y.to_bytes(32, "big")),
+        "publicValues": hx(_equiv_pv),
+    },
+    "custody": {
+        "instance": hx(instance),
+        "providerId": provider_id,
+        "seed": hx(seed),
+        "root": hx(_cust_root),
+        "leafCount": leaf_count,
+        "k": 16_384,
+        "publicValues": hx(_cust_pv),
+    },
+})
+
 print("all internal assertions passed")
