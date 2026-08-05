@@ -9,8 +9,13 @@ description = "Reference implementation of the blobsitter normative spec (spec/n
 # keccak-256; the same crate family SP1 patches for in-circuit acceleration,
 # so guest code can later share this exact dependency.
 tiny-keccak = { version = "2", features = ["keccak", "sha3"] }
-# only used to reduce the Fiat-Shamir hash into the BLS12-381 scalar field
+# only used to reduce the Fiat-Shamir hash into the BLS12-381 scalar field, and as the
+# slow cross-check backend for the barycentric evaluator
 num-bigint = "0.4"
+# the production Fr arithmetic for blob evaluation — the crate the SP1 patches
+# accelerate in-guest (the generator constant is 7, matching the consensus spec's
+# root-of-unity derivation exactly)
+bls12_381 = { version = "0.8", default-features = false }
 
 [dev-dependencies]
 serde_json = "1"
