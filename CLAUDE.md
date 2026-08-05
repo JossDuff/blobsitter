@@ -59,7 +59,9 @@ and bonded storage providers accountable via challenges and slashing.
 - Executor benchmarks / vkeys (local only; needs `sp1up` + `cargo prove build` in each
   guest dir first): from `circuits/script/`, `cargo run --release --bin execute --
   <equivalence|custody> [smoke|full]` and `--bin vkey`. Results and conditions are
-  recorded in `circuits/BENCHMARKS.md`.
+  recorded in `circuits/BENCHMARKS.md`. Building `circuits/script` also needs a protoc
+  with the well-known-type includes (v21+; distro 3.x fails with "empty.proto not
+  found") — grab a protoc release and point `PROTOC=<path>/bin/protoc` at it.
 
 ## Layout
 

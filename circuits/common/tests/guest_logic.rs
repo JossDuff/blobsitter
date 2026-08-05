@@ -51,6 +51,22 @@ fn equivalence_matches_public_values_vector() {
 }
 
 #[test]
+#[should_panic(expected = "blob count")]
+fn equivalence_rejects_wrong_blob_count() {
+    let mut input = fs_z_input();
+    input.blobs.push(vec![0u8; 4096 * 32]); // one blob too many for m = 3
+    equivalence(&input);
+}
+
+#[test]
+#[should_panic(expected = "versioned-hash count")]
+fn equivalence_rejects_wrong_versioned_hash_count() {
+    let mut input = fs_z_input();
+    input.blob_versioned_hashes.push([0u8; 32]);
+    equivalence(&input);
+}
+
+#[test]
 #[should_panic(expected = "canonical form")]
 fn equivalence_rejects_noncanonical_high_byte() {
     let mut input = fs_z_input();
@@ -117,6 +133,14 @@ fn custody_produces_packed_public_values() {
             8
         )
     );
+}
+
+#[test]
+#[should_panic(expected = "sample count")]
+fn custody_rejects_wrong_sample_count() {
+    let mut input = custody_input(50, 8);
+    input.samples.pop(); // 7 samples against k = 8
+    custody(&input);
 }
 
 #[test]

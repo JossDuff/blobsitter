@@ -3,6 +3,9 @@
 use blobsitter_circuits_common::{CustodyInput, CustodySample, EquivalenceInput};
 use blobsitter_reference::{custody_index, locate, node, peak_heights, root, testvec, Chunk, Hash};
 
+// These paths mirror `cargo prove build`'s output layout, INCLUDING the target triple —
+// which has changed across SP1 major versions before. On a toolchain bump, re-check the
+// build output ("cargo:rustc-env=SP1_ELF_… " lines) and update these together.
 pub const EQUIVALENCE_ELF_PATH: &str =
     "../equivalence/target/elf-compilation/riscv64im-succinct-zkvm-elf/release/blobsitter-equivalence-guest";
 pub const CUSTODY_ELF_PATH: &str =
