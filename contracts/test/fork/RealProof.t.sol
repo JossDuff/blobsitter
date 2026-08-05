@@ -107,6 +107,35 @@ contract RealProofForkTest is InstanceTestBase {
         assertEq(fx.getProvider(pid).lastProvenPlusOne, 1, "custody proven for real");
     }
 
+    /// Raw verify-gas comparison across BOTH wrap modes, calling the live gateways
+    /// directly (spike finding: SP1 deploys SEPARATE gateways per wrap mode — the
+    /// instance's pinned constant is the Groth16 one, so PLONK is measured here
+    /// against its own gateway; at freeze the constant must match the chosen mode).
+    function test_fork_rawVerifierGasBothModes() public {
+        address groth16Gateway = 0x397A5f7f3dBd538f23DE225B51f532c34448dA9B;
+        address plonkGateway = 0x3B6041173B80E77f038f3F2C0f9744f04837185e;
+
+        string[2] memory modes = ["groth16", "plonk"];
+        address[2] memory gateways = [groth16Gateway, plonkGateway];
+        for (uint256 i = 0; i < 2; ++i) {
+            string memory path =
+                string.concat("test/fixtures/proofs/equivalence_", modes[i], ".json");
+            if (!vm.exists(path)) continue;
+            string memory fixt = vm.readFile(path);
+            bytes memory callData = abi.encodeWithSignature(
+                "verifyProof(bytes32,bytes,bytes)",
+                fixt.readBytes32(".vkey"),
+                fixt.readBytes(".publicValues"),
+                fixt.readBytes(".proofBytes")
+            );
+            uint256 g0 = gasleft();
+            (bool ok,) = gateways[i].staticcall(callData);
+            uint256 used = g0 - gasleft();
+            assertTrue(ok, string.concat(modes[i], " raw verify failed"));
+            emit log_named_uint(string.concat("raw verifyProof gas, ", modes[i]), used);
+        }
+    }
+
     /// One flipped byte anywhere in the proof must be rejected by the real verifier.
     function test_fork_realProof_tamperedRejected() public {
         BlobsitterInstance.Declaration memory d;
