@@ -20,3 +20,4 @@ broadcast/
 
 # Node (tooling only, if ever)
 node_modules/
+proving-run.log
