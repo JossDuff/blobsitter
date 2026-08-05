@@ -73,18 +73,17 @@ proofs keccak only, no SNARKs. Answering wins the challenger's bond (it
 funds the response gas); silence gets the provider slashed, with a bounty to the
 challenger and the rest absorbed by the paymaster.
 
-**Exiting.** A provider can always leave: announce unbonding, wait 14 days (during
-which challenges against their *pre-exit* obligations still apply), withdraw the full
-bond to the cold address. Slashing and exit are mutually exclusive by construction —
-a bond is distributed exactly once.
+**Exiting.** A provider can always leave by announcing unbonding, waiting 14 days (during
+which challenges against their *pre-exit* obligations still apply), then withdrawing the full
+bond to the cold address.
 
 **Funding.** The paymaster is a strictly dumb sidecar: donations in, carrier
 reimbursements out (rate-limited by a spending allowance so even a catastrophic bug
 can only leak slowly), slash remainders absorbed. If the dataset goes a full year
 without meaningful growth, donors can reclaim their share pro-rata. It can never touch
-the dataset, the stakes, or the proofs — and its failure never blocks publication.
+the dataset, the stakes, or the proofs.  Its failure never blocks publication.
 
-## What you can rely on — and what you can't
+## What is and is not guaranteed
 
 **Guarantees**
 
@@ -96,8 +95,6 @@ the dataset, the stakes, or the proofs — and its failure never blocks publicat
   keccak + calldata forever.  They cannot rot with any proving ecosystem.
 - The stake only ever moves to the provider's cold withdrawal address, or through a
   slash. The publisher can never touch ETH; the paymaster can never touch the data.
-- No trusted-setup ceremony was or will be run by or for this protocol — its proofs
-  consume pre-existing public setups only.
 
 **Non-guarantees:**
 
@@ -123,7 +120,7 @@ the dataset, the stakes, or the proofs — and its failure never blocks publicat
 
 **Status:** contracts and circuits are implemented, extensively tested (golden-vector
 conformance across four independent implementations, twenty named invariants in CI,
-end-to-end runs with real proofs against real mainnet state on a fork), and measured —
+end-to-end runs with real proofs against real mainnet state on a fork), and measured
 but **not audited and not deployed**. Off-chain operational tooling (storage daemon,
 carrier and publisher CLIs) is the next phase. Do not use this to persist anything you
 love yet.
@@ -140,4 +137,4 @@ cd contracts && forge test                      # full contract suite
 
 ## License
 
-MIT — see `LICENSE`.
+MIT, see `LICENSE`.
