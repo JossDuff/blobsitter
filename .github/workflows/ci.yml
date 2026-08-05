@@ -43,6 +43,20 @@ jobs:
         working-directory: contracts
         continue-on-error: true
 
+  # The guest logic (the exact code the circuits prove) must pass its native tests
+  # against the committed vectors. No SP1 toolchain involved: the guest binaries are
+  # thin wrappers, and everything they assert lives in the host-buildable common crate.
+  # Executor benchmarks and vkey derivation are local-only (see circuits/BENCHMARKS.md).
+  circuits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: circuits
+      - run: cargo test --manifest-path circuits/Cargo.toml
+
   # The reference implementation must agree with the committed vectors.
   rust:
     runs-on: ubuntu-latest
