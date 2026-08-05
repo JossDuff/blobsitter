@@ -1,7 +1,7 @@
 # Blobsitter — Normative Implementation Specification
 
-**Status: DRAFT v0.1 (2026-07-29). Sections 1–10 are proposed-final; sections 11+ are
-reserved and unwritten.**
+**Status: DRAFT v0.2 (2026-08-05). Sections 1–13 and 15–16 are reviewed/accepted;
+§14 (circuits) is authored and proposed-final, with vkeys provisional until freeze.**
 
 This document defines the exact byte-level rules every component — contract template,
 equivalence circuit, custody circuit, storage daemon, publisher tooling, reference
@@ -642,6 +642,88 @@ expires worthless — the period is simply missed.
 
 ---
 
+## 14. Circuit statements & public-input encodings
+
+**Status: authored 2026-08-05. Statements and publicValues layouts are proposed-final;
+the vkeys and the verifier deployment remain PROVISIONAL until contract freeze (§14.4).**
+
+Both circuits are SP1 zkVM guest programs. The instance verifies proofs via
+`ISP1Verifier.verifyProof(bytes32 vkey, bytes publicValues, bytes proof)`; this section
+fixes what each circuit proves and the exact `publicValues` byte layout. Layouts follow
+the §1 conventions — fixed-width big-endian concatenation, no length prefixes (every
+length is determined by quantities the contract already holds). Guests implement §1–§10
+exactly (the reference implementation is compiled into the guests; the golden vectors
+are the shared truth).
+
+### 14.1 Equivalence circuit
+
+**Statement.** For a declaration with prior state `(n₀, priorPeaks)`, new leaf count
+`n₁ = n₀ + m`, versioned hashes `vh[0..B)`, and `newSubtreePeaks[0..S)`, there exist
+blobs `b_0 … b_{B-1}` (4096 32-byte field elements each) such that:
+
+1. **Canonical form (§4):** in every blob, each element's byte 0 is `0x00`; local chunk
+   `u ∈ [0, m)` is bytes 1..31 of blob `⌊u/4096⌋` element `u mod 4096`; all elements at
+   local index ≥ m are the 32-byte zero string.
+2. **Content (§6):** the m chunks, appended at n₀, produce exactly `newSubtreePeaks`
+   under the §6.1 decomposition (heights recomputed from `(n₀, m)`, roots per §5.1).
+3. **Evaluation (§8 + EIP-4844):** `z` is derived per §8 from
+   `(A, vh[], priorPeaks[], newSubtreePeaks[], n₀, n₁)`, and for each blob j,
+   `y_j = P_{b_j}(z)` — the barycentric evaluation of the blob (as evaluations over the
+   EIP-4844 bit-reversed roots-of-unity domain in Fr) at z.
+
+```
+publicValues = H(preimage) ‖ y_0 ‖ … ‖ y_{B-1}          # 32 + 32·B bytes
+    preimage  = the §8 preimage (0x03 ‖ A ‖ vh… ‖ priorPeaks… ‖ newSubtreePeaks… ‖
+                u64be(n₀) ‖ u64be(n₁));  H = keccak-256;  y_j as 32-byte big-endian Fr
+```
+
+The contract checks `publicValues` equals `H(preimage)` (it builds the same preimage to
+derive z — z is `uint256(H(preimage)) mod r`, so binding the hash binds z and every §8
+field) followed by the `y_j` values whose openings the point-evaluation precompile
+already verified against `vh_j` at z. The triple `(vh_j, z, y_j)` ties each blob's bytes
+to its KZG commitment: the precompile proves the *committed* polynomial evaluates to
+`y_j` at z, the circuit proves the *witnessed bytes* do, and z's §8 entropy makes
+agreement at z imply agreement everywhere (Schwartz–Zippel over Fr).
+
+### 14.2 Custody circuit
+
+**Statement.** For public `(A, providerId, seed, root, leafCount, k)` there exist a
+canonical peak list `P` and chunks `c_0 … c_{k-1}` with sibling paths such that
+`Root(leafCount, P) = root` (§5.3) and for every `j ∈ [0, k)`:
+`verify(c_j, idx(j), path_j, leafCount, P)` (§7.2) passes, where
+`idx(j) = uint256(H(0x04 ‖ A ‖ seed ‖ u64be(providerId) ‖ u64be(j))) mod leafCount`
+(§9, sampling with replacement).
+
+```
+publicValues = A ‖ u64be(providerId) ‖ seed ‖ root ‖ u64be(leafCount) ‖ u64be(k)
+             # 20 + 8 + 32 + 32 + 8 + 8 = 108 bytes
+```
+
+The contract packs its custody-commit snapshot plus `custodyK`. A snapshot with
+`leafCount = 0` admits no witness (the §9 reduction is undefined at zero): the escape
+hatch's zero-reveal rule (§12.6) is the only proof path for an empty snapshot.
+
+### 14.3 Vector coverage
+
+`vectors/public_values.json` fixes both encodings: the equivalence case reuses the
+`fs_z.json` declaration (preimage hash, z, and the barycentric y of the corresponding
+pattern blob — computed independently by the Python generator and the Rust reference,
+and cross-checked against c-kzg for the real-commitment fixture blob); the custody case
+reuses the `custody_indices.json` inputs. Contract, guests, and reference all consume it.
+
+### 14.4 Verifier & vkey pinning (freeze policy)
+
+- An SP1 vkey is a hash of the guest ELF and circuit version: it changes with every
+  toolchain bump. `EQUIVALENCE_VKEY` / `CUSTODY_VKEY` are PROVISIONAL until freeze.
+- At freeze: pin ONE SP1 release (v6.3.1 at authoring time); build both guests
+  reproducibly (containerized, committed lockfiles); record the vkeys as template
+  constants; hardcode ONE specific, non-upgradeable verifier deployment for the chosen
+  wrap mode (never the vendor's upgradeable gateway); archive ELF binaries, vkeys,
+  toolchain artifacts, and SRS mirrors so proofs remain generatable from source forever.
+- Wrap mode: PLONK (universal public setup) is the default; Groth16 (vendor ceremony)
+  is an acceptable fallback if the proving spike argues for it. The §12 call shape is
+  identical either way.
+
 ## 15. Paymaster accounting
 
 **Status: reviewed and accepted 2026-07-31 (as is §16).**
@@ -817,11 +899,3 @@ PayoutFailed()                       claim() transfer failed (state restored; re
 Rule of construction: every MUST in §11–§15 maps to exactly one error above; a new guard
 requires a new (or explicitly reused) entry here in the same commit.
 
----
-
-## Reserved sections (unwritten — do not implement against guesses)
-
-- **§14 Circuit statements & public-input encodings** — equivalence and custody circuits as
-  implemented on SP1; exact byte layout of `publicValues` for both vkeys. Written when SP1
-  integration starts; the mock verifier used before then MUST take (vkey, publicValues,
-  proof) with the §12 call shapes so the swap is mechanical.
