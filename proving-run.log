@@ -1,0 +1,55 @@
+prover: network; requesting equivalence / plonk (fixture=true)…
+vkey: 0x00ca78aee8a6e7b631f5ee0c343d214660840ed2b30e943d048436e74cc75dcb
+circuit:          equivalence
+mode:             plonk
+latency:          178.999091866s   (request -> verified proof in hand)
+public values:    64 bytes, match native
+onchain proof:    964 bytes
+fixture written:  contracts/test/fixtures/proofs/equivalence_plonk.json
+prover: network; requesting custody / plonk (fixture=true)…
+vkey: 0x00519b27817c44dfdf576169fab4e5f3af1b40a16ab5b28cdb854bd6e8b4e91c
+circuit:          custody
+mode:             plonk
+latency:          170.078452687s   (request -> verified proof in hand)
+public values:    108 bytes, match native
+onchain proof:    964 bytes
+fixture written:  contracts/test/fixtures/proofs/custody_plonk.json
+prover: network; requesting equivalence / groth16 (fixture=true)…
+vkey: 0x00ca78aee8a6e7b631f5ee0c343d214660840ed2b30e943d048436e74cc75dcb
+circuit:          equivalence
+mode:             groth16
+latency:          38.317918244s   (request -> verified proof in hand)
+public values:    64 bytes, match native
+onchain proof:    356 bytes
+fixture written:  contracts/test/fixtures/proofs/equivalence_groth16.json
+prover: network; requesting equivalence / groth16 (fixture=true)…
+vkey: 0x00ca78aee8a6e7b631f5ee0c343d214660840ed2b30e943d048436e74cc75dcb
+circuit:          equivalence
+mode:             groth16
+latency:          46.803001004s   (request -> verified proof in hand)
+public values:    64 bytes, match native
+onchain proof:    356 bytes
+fixture written:  contracts/test/fixtures/proofs/equivalence_groth16.json
+prover: network; requesting custody / groth16 (fixture=true)…
+vkey: 0x00519b27817c44dfdf576169fab4e5f3af1b40a16ab5b28cdb854bd6e8b4e91c
+circuit:          custody
+mode:             groth16
+latency:          52.1096295s   (request -> verified proof in hand)
+public values:    108 bytes, match native
+onchain proof:    356 bytes
+fixture written:  contracts/test/fixtures/proofs/custody_groth16.json
+building full-scale witness…
+prover: network; requesting custody / plonk (fixture=false)…
+vkey: 0x00519b27817c44dfdf576169fab4e5f3af1b40a16ab5b28cdb854bd6e8b4e91c
+circuit:          custody
+mode:             plonk
+latency:          132.874066617s   (request -> verified proof in hand)
+public values:    108 bytes, match native
+onchain proof:    964 bytes
+prover: network; requesting equivalence / plonk (fixture=false)…
+vkey: 0x00ca78aee8a6e7b631f5ee0c343d214660840ed2b30e943d048436e74cc75dcb
+circuit:          equivalence
+mode:             plonk
+latency:          107.862974354s   (request -> verified proof in hand)
+public values:    224 bytes, match native
+onchain proof:    964 bytes

@@ -13,3 +13,6 @@ blobsitter-circuits-common = { path = "../common" }
 
 [patch.crates-io]
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0" }
+# Accelerates the Fr arithmetic behind the barycentric evaluation — the swap that took
+# the equivalence guest from ~2.3B cycles/blob to the measured numbers in BENCHMARKS.md.
+bls12_381 = { git = "https://github.com/sp1-patches/bls12_381", tag = "patch-0.8.0-sp1-6.2.0" }

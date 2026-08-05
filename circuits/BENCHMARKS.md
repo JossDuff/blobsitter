@@ -6,17 +6,22 @@ latency decisions. Reproduce with `circuits/script`: build both guests
 `cargo run --release --bin execute -- <equivalence|custody> [smoke|full]`.
 Every run cross-checks the zkVM-committed public values against the native computation.
 
-**Conditions (2026-08-05):** SP1 v6.3.1 (cargo-prove `8252c29`), Hypercube; guests built
-with the SP1-patched tiny-keccak (`patch-2.0.2-sp1-6.0.0`); Fr arithmetic via num-bigint
-(unaccelerated — see finding below); executor on a desktop CPU, throughput observed
-~70–85M cycles/s.
+**Conditions (2026-08-05, post field-arithmetic swap):** SP1 v6.3.1 (cargo-prove
+`8252c29`), Hypercube; guests built with the SP1-patched tiny-keccak
+(`patch-2.0.2-sp1-6.0.0`) and the SP1-patched bls12_381 (`patch-0.8.0-sp1-6.2.0`);
+Fr arithmetic via `bls12_381::Scalar`; executor on a desktop CPU.
 
 | bench | total cycles | executor wall |
 |---|---:|---:|
 | custody, n = 50, k = 8 (smoke) | 190,663 | 25 ms |
-| **custody, n = 1,000,003, k = 16,384 (protocol scale)** | **863,043,844** | 13.3 s |
-| equivalence, m = 3, B = 1 (the fs_z shape) | 2,270,679,446 | 31.9 s |
-| equivalence, m = 24,576, B = 6 (max declaration) | 13,898,300,185 | 163.5 s |
+| **custody, n = 1,000,003, k = 16,384 (protocol scale)** | **863,174,916** | 15.2 s |
+| equivalence, m = 3, B = 1 (the fs_z shape) | 8,191,583 | — |
+| **equivalence, m = 24,576, B = 6 (max declaration)** | **102,569,159** | 3.0 s |
+
+Pre-swap numbers for the record (num-bigint Fr arithmetic): equivalence was
+2,270,679,446 cycles at B = 1 and 13,898,300,185 at B = 6 — the swap to the patched
+`bls12_381::Scalar` delivered a measured **~135–277× reduction**. Custody is unchanged
+(keccak-bound; the swap doesn't touch it).
 
 ## Findings
 
@@ -25,22 +30,92 @@ with the SP1-patched tiny-keccak (`patch-2.0.2-sp1-6.0.0`); Fr arithmetic via nu
    custody targets (sub-hour on 4090-class hardware; cents per proof on the network)
    hold with margin. The keccak patch makes this workload almost entirely
    precompile-bound.
-2. **Equivalence is dominated by unaccelerated field arithmetic — the headline
-   optimization target.** ~2.3B cycles PER BLOB (vs the 0.1–0.4B total estimate), and
-   the profile is squarely the barycentric evaluation's num-bigint Fr arithmetic (the
-   keccak side of the statement is a few million cycles). num-bigint is the right
-   *reference* implementation (portable, matches the Python generator and c-kzg), but
-   the guest must switch its Fr math to the SP1-patched `bls12_381` (the `kzg-rs`
-   approach — that crate's full KZG verify measures ~27M cycles/blob, suggesting
-   roughly a 100× reduction here). Scheduled for the proving-spike milestone; the
-   statement, layouts, and vectors are unaffected — only the arithmetic backend swaps.
-3. **Batch inversion already applied.** The evaluator uses Montgomery batch inversion
-   (one Fermat inversion per evaluation instead of 4096); the numbers above include it.
+2. **Equivalence is now comfortably cheap.** With the `bls12_381::Scalar` backend
+   (SP1-patched in-guest), a maximum 6-blob declaration is ~103M cycles — an order of
+   magnitude UNDER the original 0.1–0.4B-per-declaration research estimate. Both
+   circuits sit in the cheapest network pricing tier.
+3. **Batch inversion applied in both backends** (one field inversion per evaluation);
+   the num-bigint implementation survives as a test-only cross-check, and agreement is
+   four-way: Scalar / bigint / Python / c-kzg.
 
-## Provisional vkeys (2026-08-05 — churn with every toolchain/guest change; see the
-freeze policy in the circuit spec)
+## Provisional vkeys (2026-08-05, post-swap — churn with every toolchain/guest change;
+see the freeze policy in the circuit spec)
 
 ```
-EQUIVALENCE_VKEY = 0x004ac7b99d5e2e1d99c91145ed1a77d2f6b425bb64933c8a2763748a9119d434
-CUSTODY_VKEY     = 0x00ce5edf75d8b4192fb617f0c291bbca4dad9c37fecb75d1529237a6bd8032af
+EQUIVALENCE_VKEY = 0x00ca78aee8a6e7b631f5ee0c343d214660840ed2b30e943d048436e74cc75dcb
+CUSTODY_VKEY     = 0x00519b27817c44dfdf576169fab4e5f3af1b40a16ab5b28cdb854bd6e8b4e91c
 ```
+
+These are wired into the instance constants (provisional, frozen at freeze); the
+RealProof fork test's staleness guard fails closed on any drift between the contract,
+the committed proofs, and the current guests.
+
+# Local CPU proving (attempted 2026-08-05)
+
+Attempted on a 30 GB-RAM desktop (compressed mode, the network-priced artifact stage):
+the prover was **OOM-killed at ~24.5–25 GB anon RSS in all three attempts** — default
+settings, `SHARD_SIZE=2^21` (8× smaller shards), and additionally `MEMORY_LIMIT=18GiB`.
+The kill RSS was identical every time: the footprint is a fixed cost of the v6 CPU
+prover's machinery, not shard-driven, and the documented memory knobs did not bound it.
+(Methodology note: the OOM SIGKILL is silent — benchmark pipelines need `pipefail` or
+the kill masquerades as a clean empty run.)
+
+**Finding: SP1 v6.3.1 local CPU proving of these workloads requires a ≳32 GB machine**
+— materially above the vendor's published 16 GB guidance. Consequences for the
+protocol's self-hosting story: provider hardware guidance should say 32 GB+ (or a
+4090-class GPU, per the original research) for self-hosted proving; the keccak-only
+escape hatch remains the true zero-infrastructure fallback, which is exactly why it
+exists. A CPU wall-clock number is still worth capturing on adequate hardware during
+the freeze rehearsal (which requires a self-hosted reproof anyway).
+
+# Network proving (Succinct prover network, 2026-08-05)
+
+Real proofs generated by the maintainer's account via `prove <circuit> <mode>`; every
+proof verified locally and its public values matched against the native computation.
+Latency is request → verified proof in hand.
+
+| run | mode | latency | onchain proof size |
+|---|---|---:|---:|
+| equivalence (fixture, B = 1) | PLONK | 179.0 s | 964 B |
+| custody (fixture, k = 16,384 over n = 8) | PLONK | 170.1 s | 964 B |
+| equivalence (fixture) | Groth16 | 38.3 s / 46.8 s | 356 B |
+| custody (fixture) | Groth16 | 52.1 s | 356 B |
+| custody FULL SCALE (863M cycles) | PLONK | 132.9 s | 964 B |
+| equivalence FULL SCALE (B = 6, 102.6M cycles) | PLONK | 107.9 s | 964 B |
+
+**Per-proof network cost (maintainer's explorer history, 2026-08-05):** 7 requests,
+each **~0.465 PROVE** (six at 0.464972…, one at 0.464108…), total **≈ 3.25 PROVE ≈
+$0.62** at the ~$0.19/PROVE rate that day — roughly **9¢ per proof**. Notably FLAT
+across workloads: the 863M-cycle full-scale custody proof cost the same as the tiny
+fixture proofs and the same in either wrap mode, i.e. pricing at this protocol's scale
+is dominated by the per-request base fee, not cycles. Monthly custody economics are
+therefore comfortably inside the spec's cents-per-proof assumption, with real headroom
+for datasets far larger than the reference profile.
+
+## On-chain verification (mainnet fork, real deployed verifiers, real proofs)
+
+The RealProof fork suite runs the complete loop with no mocks: genesis `declareFor`
+(real KZG opening through the real point-evaluation precompile + the real verifier in
+one transaction), then `beginProof`/`submitProof` with the real custody proof. A
+tampered byte anywhere in a proof is rejected.
+
+| measurement | Groth16 | PLONK |
+|---|---:|---:|
+| raw `verifyProof` at the live gateway | 228,545 gas | 291,615 gas |
+| `declareFor` end-to-end (proof + precompile + merge) | 519,473 gas | — |
+| `submitProof` end-to-end | 321,953 gas | — |
+
+## Spike findings for the freeze decision
+
+1. **SP1 deploys SEPARATE verifier gateways per wrap mode.** The address the instance
+   pins (`0x397A5f7f…dA9B`) is the **Groth16** gateway; PLONK proofs verify at
+   `0x3B604117…185e`. Whatever wrap mode freeze chooses, the pinned constant must be
+   that mode's (non-upgradeable, version-specific) verifier.
+2. **Groth16 measured better on every axis**: verify gas (−63k/proof), proof size
+   (356 vs 964 B), and network latency (3–4× faster wraps). PLONK's sole advantage is
+   provenance: its setup derives from the universal Ignition ceremony, versus
+   Succinct's own 2024 Groth16 ceremony — exactly the spec's setup-preference
+   gradient. The freeze decision now has the measured price of that preference:
+   ~63k gas per verification, ~2.7× calldata, and slower proof turnaround.
+3. **The v6 proof selector routes on mainnet today** (both gateways) — no version-lag
+   issue at current head; re-verify at the freeze block.

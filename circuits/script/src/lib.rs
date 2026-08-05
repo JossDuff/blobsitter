@@ -99,6 +99,59 @@ impl MemoTree {
     }
 }
 
+/// The fork-replayable witness pair, derived from the genesis KZG fixture so the
+/// proofs bind exactly the declaration and custody state the fork test replays:
+/// the genesis equivalence (n₀ = 0, m = 8, the REAL versioned hash from the fixture)
+/// and a full-k custody proof over the resulting n = 8 state at a fixed seed.
+pub fn fixture_inputs(genesis_fixture_path: &str) -> (EquivalenceInput, CustodyInput) {
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(genesis_fixture_path).unwrap()).unwrap();
+    let unhex = |s: &str| -> Vec<u8> {
+        let s = s.strip_prefix("0x").unwrap();
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    };
+    let instance: [u8; 20] = unhex(json["instance"].as_str().unwrap()).try_into().unwrap();
+    let vh: Hash = unhex(json["blobVersionedHashes"][0].as_str().unwrap()).try_into().unwrap();
+    let n1 = json["newLeafCount"].as_u64().unwrap();
+    assert_eq!(json["priorLeafCount"].as_u64().unwrap(), 0, "genesis fixture expected");
+
+    let chunks: Vec<Chunk> = (0..n1).map(testvec::chunk).collect();
+    let mut blob = vec![0u8; 4096 * 32];
+    for (u, c) in chunks.iter().enumerate() {
+        blob[u * 32 + 1..(u + 1) * 32].copy_from_slice(c);
+    }
+    let equivalence = EquivalenceInput {
+        instance,
+        blob_versioned_hashes: vec![vh],
+        prior_peaks: vec![],
+        prior_leaf_count: 0,
+        new_leaf_count: n1,
+        blobs: vec![blob],
+    };
+
+    // Custody over the post-genesis state, at the seed the fork test replays via
+    // vm.prevrandao. Full protocol k; sampling with replacement over 8 leaves is valid.
+    let seed = blobsitter_reference::keccak256(b"fork custody seed");
+    let tree = MemoTree::build(n1);
+    let samples = (0..16_384u64)
+        .map(|j| {
+            let idx = custody_index(&instance, &seed, 1, j, n1);
+            CustodySample { chunk: testvec::chunk(idx), path: tree.path(idx) }
+        })
+        .collect();
+    let custody = CustodyInput {
+        instance,
+        provider_id: 1,
+        seed,
+        root: tree.root(),
+        leaf_count: n1,
+        k: 16_384,
+        peaks: tree.peaks(),
+        samples,
+    };
+    (equivalence, custody)
+}
+
 /// A custody witness at full protocol scale (or any smaller k / n).
 pub fn custody_input(n: u64, k: u64) -> CustodyInput {
     let instance = [0x22u8; 20];

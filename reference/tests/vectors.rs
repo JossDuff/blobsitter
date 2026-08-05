@@ -308,6 +308,36 @@ fn public_values_vectors() {
     assert_eq!(hex_of(&pv), cu["publicValues"].as_str().unwrap(), "custody layout");
 }
 
+/// The two barycentric backends (production bls12_381 vs cross-check num-bigint) must
+/// agree byte-for-byte — on the vector blob, on on-domain points, and on a spread of
+/// pseudorandom off-domain points and element patterns.
+#[test]
+fn barycentric_backends_agree() {
+    use blobsitter_reference::blob;
+
+    let mk_elements = |seed: u8| -> Vec<[u8; 32]> {
+        (0..blob::FIELD_ELEMENTS_PER_BLOB)
+            .map(|i| {
+                let mut e = keccak256(&[seed, (i % 251) as u8]);
+                e[0] = 0; // canonical: < 2^248
+                e
+            })
+            .collect()
+    };
+    for seed in [1u8, 2, 3] {
+        let elements = mk_elements(seed);
+        for zs in [b"z one".as_slice(), b"z two", b"z three"] {
+            let mut z = keccak256(zs);
+            z[0] = 0;
+            assert_eq!(
+                blob::barycentric_eval(&elements, &z),
+                blob::barycentric_eval_bigint(&elements, &z),
+                "backend divergence"
+            );
+        }
+    }
+}
+
 #[test]
 fn custody_index_vectors() {
     let v = load("custody_indices.json");

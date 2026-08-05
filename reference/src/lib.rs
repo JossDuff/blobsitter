@@ -346,8 +346,10 @@ pub mod blob {
             .collect()
     }
 
-    /// Evaluate a blob at `z` (32-byte big-endian field element), returning y likewise.
-    pub fn barycentric_eval(elements: &[[u8; 32]], z: &[u8; 32]) -> [u8; 32] {
+    /// The slow, dependency-light num-bigint implementation — kept as a cross-check
+    /// backend (the production path below must agree with it byte-for-byte; tests and
+    /// the c-kzg/Python triangulation enforce that).
+    pub fn barycentric_eval_bigint(elements: &[[u8; 32]], z: &[u8; 32]) -> [u8; 32] {
         assert_eq!(elements.len(), FIELD_ELEMENTS_PER_BLOB);
         let r = modulus();
         let z = BigUint::from_bytes_be(z) % &r;
@@ -387,6 +389,81 @@ pub mod blob {
         let z_pow = z.modpow(&BigUint::from(4096u32), &r);
         let factor = (&r + &z_pow - 1u32) % &r * inv_width % &r;
         to32(&(acc * factor % &r))
+    }
+
+    /// Evaluate a blob at `z` (32-byte big-endian field element), returning y
+    /// likewise. Production backend: `bls12_381::Scalar` — the crate whose SP1 patch
+    /// accelerates this exact arithmetic in-guest. Its multiplicative generator is 7,
+    /// so `ROOT_OF_UNITY^(2^20)` is precisely the consensus spec's
+    /// `7^((r−1)/4096)` — the same domain as the bigint/Python/c-kzg legs.
+    pub fn barycentric_eval(elements: &[[u8; 32]], z: &[u8; 32]) -> [u8; 32] {
+        use bls12_381::Scalar;
+        assert_eq!(elements.len(), FIELD_ELEMENTS_PER_BLOB);
+
+        let from_be = |b: &[u8; 32]| -> Scalar {
+            let mut le = *b;
+            le.reverse();
+            Option::<Scalar>::from(Scalar::from_bytes(&le))
+                .expect("input is a canonical field element")
+        };
+        let to_be = |s: &Scalar| -> [u8; 32] {
+            let mut b = s.to_bytes();
+            b.reverse();
+            b
+        };
+
+        let z = from_be(z);
+        let els: Vec<Scalar> = elements.iter().map(|e| from_be(e)).collect();
+
+        // The bit-reversed evaluation domain over the 4096th roots of unity:
+        // w = 7^((r−1)/4096), the consensus spec's derivation (7 generates Fr*).
+        // The exponent's little-endian limbs are (r−1) >> 12; the subgroup facts
+        // (w^4096 = 1, w^2048 ≠ 1) are asserted by the cross-check tests.
+        let w = Scalar::from(7u64).pow(&[
+            0xbfef_ffff_fff0_0000,
+            0x8055_3bda_402f_ffe5,
+            0xd483_339d_8080_9a1d,
+            0x0007_3eda_7532_99d7,
+        ]);
+        let mut powers = Vec::with_capacity(FIELD_ELEMENTS_PER_BLOB);
+        let mut acc = Scalar::one();
+        for _ in 0..FIELD_ELEMENTS_PER_BLOB {
+            powers.push(acc);
+            acc *= w;
+        }
+        let domain: Vec<Scalar> = (0..FIELD_ELEMENTS_PER_BLOB)
+            .map(|i| powers[(i as u16).reverse_bits() as usize >> 4])
+            .collect();
+
+        // z on the domain: the evaluation is stored directly.
+        if let Some(i) = domain.iter().position(|wi| *wi == z) {
+            return to_be(&els[i]);
+        }
+
+        // Montgomery batch inversion: one field inversion for all denominators + width.
+        let mut denoms: Vec<Scalar> = domain.iter().map(|wi| z - wi).collect();
+        denoms.push(Scalar::from(4096u64));
+        let mut prefix = Vec::with_capacity(denoms.len() + 1);
+        prefix.push(Scalar::one());
+        for d in &denoms {
+            let last = *prefix.last().unwrap() * d;
+            prefix.push(last);
+        }
+        let mut inv_all = Option::<Scalar>::from(prefix.last().unwrap().invert())
+            .expect("nonzero: z is off-domain and the width is nonzero");
+        let mut invs = vec![Scalar::zero(); denoms.len()];
+        for i in (0..denoms.len()).rev() {
+            invs[i] = prefix[i] * inv_all;
+            inv_all *= denoms[i];
+        }
+        let inv_width = invs.pop().unwrap();
+
+        let mut sum = Scalar::zero();
+        for ((e, wi), d_inv) in els.iter().zip(domain.iter()).zip(invs.iter()) {
+            sum += *e * wi * d_inv;
+        }
+        let z_pow = z.pow(&[4096, 0, 0, 0]);
+        to_be(&(sum * (z_pow - Scalar::one()) * inv_width))
     }
 
     fn to32(x: &BigUint) -> [u8; 32] {

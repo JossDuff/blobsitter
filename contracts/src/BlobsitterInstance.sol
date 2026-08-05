@@ -148,10 +148,15 @@ contract BlobsitterInstance is PayoutSink {
     /// together with the exact SP1 release — at contract freeze. Tests etch the
     /// interface-exact mock at this address.
     address public constant SP1_VERIFIER = 0x397A5f7f3dBd538f23DE225B51f532c34448dA9B;
-    /// PLACEHOLDER vkeys: the real values are the SP1 program verifying keys, computed
-    /// when the circuits are built and then frozen as template constants.
-    bytes32 public constant EQUIVALENCE_VKEY = keccak256("blobsitter.equivalence-vkey.placeholder");
-    bytes32 public constant CUSTODY_VKEY = keccak256("blobsitter.custody-vkey.placeholder");
+    /// The SP1 program verifying keys for the two guests. PROVISIONAL: these track the
+    /// current guest builds (circuits/BENCHMARKS.md records them alongside their
+    /// conditions) and change with any guest or toolchain change; ONE final pair is
+    /// frozen forever at contract freeze. The RealProof fork test's staleness guard
+    /// fails closed if committed proofs stop matching these.
+    bytes32 public constant EQUIVALENCE_VKEY =
+        0x00ca78aee8a6e7b631f5ee0c343d214660840ed2b30e943d048436e74cc75dcb;
+    bytes32 public constant CUSTODY_VKEY =
+        0x00519b27817c44dfdf576169fab4e5f3af1b40a16ab5b28cdb854bd6e8b4e91c;
 
     /// r, the BLS12-381 scalar field modulus — the field EIP-4844 blob elements live in.
     uint256 private constant BLS_MODULUS =
