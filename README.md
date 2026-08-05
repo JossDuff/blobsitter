@@ -28,14 +28,14 @@ Blobsitter adds an extra layer of data persistence.  Blobsitter allows anyone to
    producing real chunks at unpredictable positions. Fail, and the provider's bond is
    slashed.
 
-## Roles
+## The cast
 
 | Role | Who they are | What they do | Skin in the game |
 |---|---|---|---|
-| **Publisher** | The dataset's steward (typically a multisig) | Signs publication intents; controls *what* enters the dataset and nothing else | Reputation only — the publisher never holds or spends ETH |
+| **Publisher** | The dataset's steward (typically a multisig) | Signs publication intents; controls *what* enters the dataset and nothing else | Reputation only. |
 | **Carrier** | Anyone with a wallet | Submits the publisher's signed intents to the chain as blob transactions | Fronts gas; reimbursed with a small tip by the paymaster |
 | **Storage provider** | Independent operators | Keep the full dataset; answer challenges; prove custody monthly | A 2 ETH bond, slashed for failure |
-| **Mirror** | Anyone | Announces "I also serve this data" — pure redundancy | None (and no protocol standing) |
+| **Mirror** | Anyone | Announces "I also serve this data". Pure redundancy | None (and no protocol standing) |
 | **Watchdog / challenger** | Anyone | Spot-checks a suspected provider by opening a challenge | A challenge bond, refunded (plus a slash bounty) if the suspicion was right |
 | **Donor** | Anyone who wants the dataset to live | Sends ETH to the paymaster, funding carriers' costs | Reclaimable pro-rata if the dataset goes dormant |
 | **Consumer** | Anyone who wants the data | Fetches from providers/mirrors and verifies against the on-chain root | None.  Verification is free reads |
@@ -55,7 +55,7 @@ blob references for posterity, and the paymaster reimburses the carrier.
 **Storing.** Providers watch the chain, pull each update's blobs during the window when
 Ethereum still serves them, and keep the chunk stream forever. Staking is one
 transaction: post 2 ETH, name a hot operator key (for day-to-day proving) and a cold
-withdrawal address (the only place the stake can ever go — a stolen operator key can at
+withdrawal address (the only place the stake can ever go.  A stolen operator key can at
 worst force an orderly exit, never steal the bond).
 
 **Proving custody.** Every 30-day period, each provider commits to a fresh dose of
@@ -63,13 +63,13 @@ chain randomness, which deterministically selects 16,384 chunk positions unique 
 provider, that dataset, that month. The provider must prove possession of the real
 bytes at those positions. Normally that's one small SNARK verified on-chain for cents;
 if proving infrastructure is ever unavailable, a deliberately primitive **escape
-hatch** accepts 32 raw chunks with plain Merkle proofs — nothing but hashes, so it
+hatch** accepts 32 raw chunks with plain Merkle proofs, nothing but hashes, so it
 works even if every proving toolchain on earth bit-rots. Miss two consecutive months
 and a grace period, and anyone may slash the provider for a bounty.
 
 **Challenging.** Anyone who suspects a provider can post a challenge bond naming up to
 32 chunk positions. The provider has 7 days to answer with the raw bytes and Merkle
-proofs — keccak only, no SNARKs, forever. Answering wins the challenger's bond (it
+proofs keccak only, no SNARKs. Answering wins the challenger's bond (it
 funds the response gas); silence gets the provider slashed, with a bounty to the
 challenger and the rest absorbed by the paymaster.
 
