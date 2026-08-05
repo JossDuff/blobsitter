@@ -65,8 +65,14 @@ Latency is request → verified proof in hand.
 | custody FULL SCALE (863M cycles) | PLONK | 132.9 s | 964 B |
 | equivalence FULL SCALE (B = 6, 102.6M cycles) | PLONK | 107.9 s | 964 B |
 
-Per-proof network cost: to be filled from the maintainer's explorer history (the SDK
-does not report it).
+**Per-proof network cost (maintainer's explorer history, 2026-08-05):** 7 requests,
+each **~0.465 PROVE** (six at 0.464972…, one at 0.464108…), total **≈ 3.25 PROVE ≈
+$0.62** at the ~$0.19/PROVE rate that day — roughly **9¢ per proof**. Notably FLAT
+across workloads: the 863M-cycle full-scale custody proof cost the same as the tiny
+fixture proofs and the same in either wrap mode, i.e. pricing at this protocol's scale
+is dominated by the per-request base fee, not cycles. Monthly custody economics are
+therefore comfortably inside the spec's cents-per-proof assumption, with real headroom
+for datasets far larger than the reference profile.
 
 ## On-chain verification (mainnet fork, real deployed verifiers, real proofs)
 
