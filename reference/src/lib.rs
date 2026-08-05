@@ -359,15 +359,33 @@ pub mod blob {
             return to32(&els[i]);
         }
 
+        // Montgomery batch inversion: invert all 4096 denominators (and the width)
+        // with a SINGLE Fermat inversion — per-term inversions would each cost a full
+        // modpow, which dominates guest cycle counts.
+        let mut denoms: Vec<BigUint> =
+            domain.iter().map(|w| (&r + &z - w) % &r).collect();
+        denoms.push(BigUint::from(4096u32));
+        let mut prefix = Vec::with_capacity(denoms.len() + 1);
+        prefix.push(BigUint::from(1u32));
+        for d in &denoms {
+            let last = prefix.last().unwrap() * d % &r;
+            prefix.push(last);
+        }
         let two = BigUint::from(2u32);
-        let inv = |x: &BigUint| x.modpow(&(&r - &two), &r); // Fermat inverse
+        let mut inv_all = prefix.last().unwrap().modpow(&(&r - &two), &r);
+        let mut invs = vec![BigUint::from(0u32); denoms.len()];
+        for i in (0..denoms.len()).rev() {
+            invs[i] = &prefix[i] * &inv_all % &r;
+            inv_all = inv_all * &denoms[i] % &r;
+        }
+        let inv_width = invs.pop().unwrap();
+
         let mut acc = BigUint::from(0u32);
-        for (e, w) in els.iter().zip(domain.iter()) {
-            let denom = (&r + &z - w) % &r;
-            acc = (acc + e * w % &r * inv(&denom)) % &r;
+        for ((e, w), d_inv) in els.iter().zip(domain.iter()).zip(invs.iter()) {
+            acc = (acc + e * w % &r * d_inv) % &r;
         }
         let z_pow = z.modpow(&BigUint::from(4096u32), &r);
-        let factor = (&r + &z_pow - 1u32) % &r * inv(&BigUint::from(4096u32)) % &r;
+        let factor = (&r + &z_pow - 1u32) % &r * inv_width % &r;
         to32(&(acc * factor % &r))
     }
 
