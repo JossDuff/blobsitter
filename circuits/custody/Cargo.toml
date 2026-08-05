@@ -1,0 +1,15 @@
+[package]
+name = "blobsitter-custody-guest"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "SP1 guest: the custody circuit (thin wrapper over blobsitter-circuits-common)"
+
+[workspace]
+
+[dependencies]
+sp1-zkvm = "6.3.1"
+blobsitter-circuits-common = { path = "../common" }
+
+[patch.crates-io]
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0" }

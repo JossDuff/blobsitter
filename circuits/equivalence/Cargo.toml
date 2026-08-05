@@ -1,0 +1,19 @@
+[package]
+name = "blobsitter-equivalence-guest"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "SP1 guest: the equivalence circuit (thin wrapper over blobsitter-circuits-common)"
+
+# Standalone workspace: guests build only under the SP1 toolchain (cargo prove build),
+# and their lockfiles are part of what the vkey ultimately hashes.
+[workspace]
+
+[dependencies]
+sp1-zkvm = "6.3.1"
+blobsitter-circuits-common = { path = "../common" }
+
+# In-guest keccak acceleration: the whole protocol is keccak, and the reference crate
+# deliberately uses tiny-keccak so this one patch accelerates every hash the guests do.
+[patch.crates-io]
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0" }

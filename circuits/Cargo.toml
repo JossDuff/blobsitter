@@ -1,0 +1,7 @@
+# The circuits workspace holds only the host-buildable guest LOGIC. The two guest
+# crates (equivalence/, custody/) and the host script crate (script/) are standalone
+# workspaces: guests need the SP1 toolchain to build, and keeping them out of this
+# workspace means `cargo test` here — and CI — never does.
+[workspace]
+resolver = "2"
+members = ["common"]
