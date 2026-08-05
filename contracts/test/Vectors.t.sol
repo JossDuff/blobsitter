@@ -133,6 +133,57 @@ contract VectorsTest is Test {
         assertEq(uint256(z), json.readUint(".z"), "z");
     }
 
+    /// The circuit public-value encodings against vectors/public_values.json — the
+    /// same bytes the guests commit and the verifier receives.
+    function test_vectors_publicValues() public {
+        string memory json = _load("public_values.json");
+        string memory fsz = _load("fs_z.json");
+        BlobsitterInstance.Params memory p;
+        p.publisher = address(0xbeef);
+
+        // Equivalence: the instance at the fs_z address must derive the vector's
+        // preimage hash and produce the exact publicValues with the vector's y.
+        address at = fsz.readAddress(".instance");
+        deployCodeTo("BlobsitterInstance.sol:BlobsitterInstance", abi.encode(p), at);
+        BlobsitterInstance inst = BlobsitterInstance(at);
+        bytes32 h = inst.fsPreimageHash(
+            fsz.readBytes32Array(".blobVersionedHashes"),
+            fsz.readBytes32Array(".priorPeaks"),
+            fsz.readBytes32Array(".newSubtreePeaks"),
+            uint64(fsz.readUint(".priorLeafCount")),
+            uint64(fsz.readUint(".newLeafCount"))
+        );
+        assertEq(h, json.readBytes32(".equivalence.preimageHash"), "preimage hash");
+        bytes32[] memory ys = new bytes32[](1);
+        ys[0] = json.readBytes32(".equivalence.y");
+        assertEq(
+            inst.encodeEquivalencePublicValues(h, ys),
+            json.readBytes(".equivalence.publicValues"),
+            "equivalence encoding"
+        );
+
+        // Custody: the packed tuple at the vector's instance address.
+        address cat = json.readAddress(".custody.instance");
+        BlobsitterInstance cinst;
+        if (cat == at) {
+            cinst = inst;
+        } else {
+            deployCodeTo("BlobsitterInstance.sol:BlobsitterInstance", abi.encode(p), cat);
+            cinst = BlobsitterInstance(cat);
+        }
+        assertEq(
+            cinst.encodeCustodyPublicValues(
+                uint64(json.readUint(".custody.providerId")),
+                json.readBytes32(".custody.seed"),
+                json.readBytes32(".custody.root"),
+                uint64(json.readUint(".custody.leafCount")),
+                uint64(json.readUint(".custody.k"))
+            ),
+            json.readBytes(".custody.publicValues"),
+            "custody encoding"
+        );
+    }
+
     /// Peaks at leaf count n via a single batched update from the empty MMR.
     function _batchedBuild(uint64 n) internal pure returns (bytes32[] memory, uint64) {
         bytes32[] memory empty = new bytes32[](0);
