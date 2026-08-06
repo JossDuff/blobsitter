@@ -16,8 +16,10 @@ import {InstanceTestBase} from "test/helpers/InstanceTestBase.sol";
 /// Gated twice: skips without ETH_RPC_URL (like every fork test), and skips when a
 /// committed proof fixture's embedded vkey no longer matches the current guest
 /// (regenerate with `prove <circuit> <mode> --fixture` in circuits/script).
-/// Set REAL_PROOF_MODE=groth16 to run the Groth16 fixtures (default plonk) — run both
-/// and compare gas for the wrap-mode decision.
+/// The instance pins the PLONK gateway (wrap mode decided 2026-08-06), so the full
+/// loop runs the plonk fixtures; REAL_PROOF_MODE exists only for re-measurement and
+/// any non-plonk mode reverts at declareFor. Groth16 fixtures remain consumed by the
+/// raw both-modes gas comparison below.
 contract RealProofForkTest is InstanceTestBase {
     using stdJson for string;
 
@@ -47,7 +49,8 @@ contract RealProofForkTest is InstanceTestBase {
         vm.createSelectFork(url);
         // Capture the LIVE gateway bytecode before the base fixture etches its mock
         // over that address, then restore it: this test wants no mocks anywhere.
-        address gateway = 0x397A5f7f3dBd538f23DE225B51f532c34448dA9B;
+        // Must match the instance's pinned SP1_VERIFIER (the PLONK gateway).
+        address gateway = 0x3B6041173B80E77f038f3F2C0f9744f04837185e;
         bytes memory realGateway = gateway.code;
         require(realGateway.length > 0, "no verifier code on fork at the pinned address");
         super.setUp();
@@ -108,9 +111,9 @@ contract RealProofForkTest is InstanceTestBase {
     }
 
     /// Raw verify-gas comparison across BOTH wrap modes, calling the live gateways
-    /// directly (spike finding: SP1 deploys SEPARATE gateways per wrap mode — the
-    /// instance's pinned constant is the Groth16 one, so PLONK is measured here
-    /// against its own gateway; at freeze the constant must match the chosen mode).
+    /// directly (spike finding: SP1 deploys SEPARATE gateways per wrap mode). The
+    /// instance pins the PLONK gateway; Groth16 stays measured here for the record
+    /// of what the Ignition-provenance preference costs.
     function test_fork_rawVerifierGasBothModes() public {
         address groth16Gateway = 0x397A5f7f3dBd538f23DE225B51f532c34448dA9B;
         address plonkGateway = 0x3B6041173B80E77f038f3F2C0f9744f04837185e;

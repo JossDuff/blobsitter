@@ -144,10 +144,14 @@ contract BlobsitterInstance is PayoutSink {
     uint256 public constant RESPONSE_BASE_GAS = 21_000;
     uint256 public constant BOND_MULTIPLIER = 3;
 
-    /// The canonical SP1VerifierGateway deployment. PROVISIONAL: pinned for real —
-    /// together with the exact SP1 release — at contract freeze. Tests etch the
-    /// interface-exact mock at this address.
-    address public constant SP1_VERIFIER = 0x397A5f7f3dBd538f23DE225B51f532c34448dA9B;
+    /// The canonical SP1VerifierGateway deployment for the PLONK wrap — the chosen
+    /// wrap mode (decided 2026-08-06: PLONK's setup derives from the universal Aztec
+    /// Ignition ceremony, preferred over Succinct's own Groth16 ceremony despite
+    /// Groth16 measuring cheaper to verify). SP1 deploys separate gateways per wrap
+    /// mode, so this constant and the wrap mode must always match. PROVISIONAL only
+    /// in that the address is re-verified — together with the exact SP1 release — at
+    /// contract freeze. Tests etch the interface-exact mock at this address.
+    address public constant SP1_VERIFIER = 0x3B6041173B80E77f038f3F2C0f9744f04837185e;
     /// The SP1 program verifying keys for the two guests. PROVISIONAL: these track the
     /// current guest builds (circuits/BENCHMARKS.md records them alongside their
     /// conditions) and change with any guest or toolchain change; ONE final pair is

@@ -102,8 +102,15 @@ tampered byte anywhere in a proof is rejected.
 | measurement | Groth16 | PLONK |
 |---|---:|---:|
 | raw `verifyProof` at the live gateway | 228,545 gas | 291,615 gas |
-| `declareFor` end-to-end (proof + precompile + merge) | 519,473 gas | — |
-| `submitProof` end-to-end | 321,953 gas | — |
+| `declareFor` end-to-end (proof + precompile + merge) | 519,473 gas | 666,685 gas |
+| `submitProof` end-to-end | 321,953 gas | 469,185 gas |
+
+> **Wrap mode decided 2026-08-06: PLONK** (Ignition-ceremony provenance, accepting the
+> measured Groth16 advantages below). The instance now pins the PLONK gateway
+> (`0x3B6041173B80E77f038f3F2C0f9744f04837185e`); the PLONK end-to-end columns above were
+> measured 2026-08-06 through that pinned gateway on a mainnet fork. The all-in premium
+> over Groth16 is ~147k gas per verified call (raw verify +63k, the rest the ~2.7× proof
+> calldata) — the accepted price of the universal-setup provenance.
 
 ## Spike findings for the freeze decision
 
