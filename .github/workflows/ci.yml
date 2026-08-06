@@ -71,7 +71,11 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
       - run: forge build
         working-directory: contracts
+      # BLOBSITTER_REQUIRE_L2 turns the anvil tests' local self-skip into a hard
+      # failure: CI must never silently lose end-to-end coverage to a path drift.
       - run: cargo test --workspace
+        env:
+          BLOBSITTER_REQUIRE_L2: "1"
       # D6 — the daemon must never grow an app-layer dependency.
       - run: ./scripts/check_daemon_opacity.sh
       # The committed KZG fixture must be exactly what the generator produces.

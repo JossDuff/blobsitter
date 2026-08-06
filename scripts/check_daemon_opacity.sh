@@ -2,20 +2,23 @@
 # D6 — opacity: the storage daemon never parses record contents, so nothing
 # app-layer may ever appear in its dependency tree. App-layer code lives in
 # workspace crates (container format, materializer — M5/M6), which makes the
-# invariant mechanically checkable: the only workspace crate the daemon may
-# depend on is the protocol reference implementation.
+# invariant mechanically checkable: of all workspace members (whatever they are
+# named), the only ones allowed in the daemon's normal dependency tree are the
+# daemon itself and the protocol reference implementation.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-allowed="blobsitter-daemon
-blobsitter-reference"
+members=$(cargo metadata --format-version 1 --no-deps \
+    | python3 -c "import json,sys; print('\n'.join(sorted(p['name'] for p in json.load(sys.stdin)['packages'])))")
 
-found=$(cargo tree -p blobsitter-daemon -e normal --prefix none \
-    | awk '{print $1}' | grep '^blobsitter-' | sort -u)
+tree=$(cargo tree -p blobsitter-daemon -e normal --prefix none | awk '{print $1}' | sort -u)
 
-if [ "$found" != "$allowed" ]; then
-    echo "D6 VIOLATION: blobsitter-daemon's workspace dependencies changed:" >&2
-    diff <(echo "$allowed") <(echo "$found") >&2 || true
+violations=$(comm -12 <(echo "$members") <(echo "$tree") \
+    | grep -vx -e blobsitter-daemon -e blobsitter-reference || true)
+
+if [ -n "$violations" ]; then
+    echo "D6 VIOLATION: blobsitter-daemon depends on other workspace crates:" >&2
+    echo "$violations" >&2
     echo "The daemon may depend only on blobsitter-reference (never on app-layer crates)." >&2
     exit 1
 fi
