@@ -690,4 +690,44 @@ emit("public_values.json", {
     },
 })
 
+# --- ingest_transcript.json --------------------------------------------------
+# A multi-declaration ingest sequence for the storage daemon: the exact frontier
+# a correct daemon must hold after committing each declaration in order. Chunk
+# CONTENT follows the standard pattern, so the daemon test reconstructs the
+# blobs itself (canonical packing, §4) and drives its full pipeline — blob →
+# chunks → subtree roots → MMR — landing on these peaks/roots. Versioned hashes
+# are deliberately absent: they need real KZG, which tests compute at runtime
+# (this generator stays dependency-free); the MMR state here is what binds.
+# Shapes cover: minimal (1), small misaligned appends, a partial final blob,
+# exactly one blob, and a two-blob declaration with a one-chunk tail.
+steps = []
+n = 0
+peaks_by_h = {}
+cnt = 0
+for nonce, m in enumerate([1, 5, 3, 4090, 4096, 4097]):
+    heights = decompose(n, m)
+    subtrees, pos = [], n
+    for h in heights:
+        subtrees.append(subtree_root(pos, h))
+        pos += 1 << h
+    peaks_by_h, cnt = apply_update(peaks_by_h, cnt, subtrees, heights)
+    result_peaks = [peaks_by_h[h] for h in sorted(peaks_by_h, reverse=True)]
+    assert result_peaks == build(n + m) and cnt == n + m
+    steps.append({
+        "nonce": nonce,
+        "priorLeafCount": n,
+        "updateChunks": m,
+        "blobCount": (m + 4095) // 4096,
+        "newSubtreePeaks": [hx(p) for p in subtrees],
+        "newLeafCount": n + m,
+        "resultPeaks": [hx(p) for p in result_peaks],
+        "resultRoot": hx(root(n + m, result_peaks)),
+    })
+    n += m
+emit("ingest_transcript.json", {
+    "_spec": "normative.md §4–§6; daemon test plan D1",
+    "chunkPattern": "chunk(i)[b]=(31*i+b)%256",
+    "steps": steps,
+})
+
 print("all internal assertions passed")
