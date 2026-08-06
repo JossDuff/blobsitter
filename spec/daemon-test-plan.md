@@ -119,7 +119,12 @@ construction (the off-chain §7.3 form AND the on-chain §7.2 form it must produ
   missing log is behind the committed cursor; the rescan is absorbed by D3's
   redelivery idempotence. The store-vs-L1 root check is skipped while the RPC's
   finalized tag is behind already-committed state — a lagging or freshly rotated node
-  must not fire the disagreement alarm against a healthy store.
+  must not fire the disagreement alarm against a healthy store. A HALTED scan (blob
+  unavailable, gap detected) never starves enforcement: responder and custody drive
+  on every tick regardless — deadlines don't wait for blobs. Log scanning is bounded
+  to the topics the daemon consumes and paged adaptively: a provider-side getLogs cap
+  halves the page for the retry (successes grow it back), so a busy instance can
+  never wedge the scan on a fixed range.
 - **D20 — alarm hygiene and failure backoff:** retry loops re-raise their condition
   every attempt (they must never give up), but identical alarm messages inside a
   suppression window page exactly once; messages carrying changing detail (attempt
