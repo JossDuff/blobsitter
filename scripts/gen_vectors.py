@@ -694,10 +694,12 @@ emit("public_values.json", {
 # A multi-declaration ingest sequence for the storage daemon: the exact frontier
 # a correct daemon must hold after committing each declaration in order. Chunk
 # CONTENT follows the standard pattern, so the daemon test reconstructs the
-# blobs itself (canonical packing, §4) and drives its full pipeline — blob →
-# chunks → subtree roots → MMR — landing on these peaks/roots. Versioned hashes
-# are deliberately absent: they need real KZG, which tests compute at runtime
-# (this generator stays dependency-free); the MMR state here is what binds.
+# blobs itself (canonical packing: chunk u rides in field element u mod 4096 of
+# blob u // 4096, high byte zero, trailing elements zero) and drives its full
+# pipeline — blob → chunks → subtree roots → MMR — landing on these peaks/roots.
+# Versioned hashes are deliberately absent: they need real KZG, which tests
+# compute at runtime (this generator stays dependency-free); the MMR state here
+# is what binds.
 # Shapes cover: minimal (1), small misaligned appends, a partial final blob,
 # exactly one blob, and a two-blob declaration with a one-chunk tail.
 steps = []

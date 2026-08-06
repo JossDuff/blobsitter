@@ -109,6 +109,18 @@ construction (the off-chain §7.3 form AND the on-chain §7.2 form it must produ
   applies identically to all of them. Tests drive primary failure, full near-head
   chain exhaustion (alarm, D3), and a bootstrap fill from an archive-only source set.
 
+### Following and liveness
+
+- **D19 — follower liveness:** a run of consecutive failed follower ticks (dead RPC,
+  revoked credentials, undecodable logs) escalates to a Critical alarm and re-alarms
+  while the condition lasts; one healthy tick resets the count. A detected event gap
+  (a nonce observed whose predecessor was never seen — e.g. a provider dropped a log
+  from a getLogs page) rewinds the scan cursor to the deployment block, since the
+  missing log is behind the committed cursor; the rescan is absorbed by D3's
+  redelivery idempotence. The store-vs-L1 root check is skipped while the RPC's
+  finalized tag is behind already-committed state — a lagging or freshly rotated node
+  must not fire the disagreement alarm against a healthy store.
+
 ## Layer 2 — anvil integration harness
 
 The end-to-end rig every later milestone builds on (`testkit/`): anvil with the REAL
