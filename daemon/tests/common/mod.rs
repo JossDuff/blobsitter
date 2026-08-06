@@ -45,11 +45,15 @@ pub fn declaration(nonce: u64, n0: u64, m: u64) -> (DeclaredEvent, Vec<RawBlob>)
     (event, blobs)
 }
 
+/// A handle for feeding a [`MockSource`] after construction (long-lived rigs whose
+/// declarations arrive over time).
+pub type SharedBlobs = Arc<std::sync::Mutex<HashMap<Hash, RawBlob>>>;
+
 /// A mock source: serves whatever verified-or-not bytes it was loaded with, keyed by
 /// the versioned hash it CLAIMS they answer (the ingest side never trusts the claim).
 pub struct MockSource {
     pub name: String,
-    blobs: HashMap<Hash, RawBlob>,
+    blobs: SharedBlobs,
     fail_hard: bool,
     calls: Arc<AtomicUsize>,
 }
@@ -58,10 +62,17 @@ impl MockSource {
     pub fn serving(name: &str, entries: impl IntoIterator<Item = (Hash, RawBlob)>) -> Self {
         Self {
             name: name.into(),
-            blobs: entries.into_iter().collect(),
+            blobs: Arc::new(std::sync::Mutex::new(entries.into_iter().collect())),
             fail_hard: false,
             calls: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// A source plus the live handle to keep loading it.
+    pub fn shared(name: &str) -> (Self, SharedBlobs) {
+        let source = Self::serving(name, []);
+        let handle = source.blobs.clone();
+        (source, handle)
     }
 
     pub fn empty(name: &str) -> Self {
@@ -91,7 +102,8 @@ impl BlobSource for MockSource {
         if self.fail_hard {
             return Err(SourceError("simulated endpoint failure".into()));
         }
-        Ok(wanted.iter().filter_map(|vh| self.blobs.get(vh).cloned()).collect())
+        let blobs = self.blobs.lock().unwrap();
+        Ok(wanted.iter().filter_map(|vh| blobs.get(vh).cloned()).collect())
     }
 }
 
@@ -121,4 +133,92 @@ pub fn rig_serving(dir: &Path, declarations: &[(DeclaredEvent, Vec<RawBlob>)]) -
         e.blob_versioned_hashes.iter().copied().zip(blobs.iter().cloned())
     });
     rig(dir, vec![Box::new(MockSource::serving("primary", entries))])
+}
+
+/// Layer-2 helpers: spawning the real daemon binary against the anvil harness.
+pub mod l2 {
+    use std::path::Path;
+
+    use blobsitter_testkit::anvil::Harness;
+    use blobsitter_testkit::beacon_stub::BeaconStub;
+
+    pub struct Daemon {
+        child: std::process::Child,
+    }
+
+    impl Drop for Daemon {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    /// Spawn `blobsitterd` against the harness. `provider` = (providerId, operator
+    /// key hex) switches on enforcement duties; the key travels via the environment,
+    /// exactly like production.
+    pub fn spawn_daemon(
+        dir: &Path,
+        harness: &Harness,
+        stub: &BeaconStub,
+        provider: Option<(u64, &str)>,
+    ) -> Daemon {
+        let data_dir = dir.join("data");
+        let mut config = format!(
+            r#"
+instance = "{instance}"
+execution_rpc = "{rpc}"
+data_dir = "{data}"
+deployment_block = {deploy}
+poll_interval_secs = 1
+
+[beacon]
+endpoints = ["{stub}"]
+genesis_time = 0
+seconds_per_slot = 1
+"#,
+            instance = harness.instance,
+            rpc = harness.endpoint,
+            data = data_dir.display(),
+            deploy = harness.instance_deploy_block,
+            stub = stub.url,
+        );
+        if let Some((id, _)) = provider {
+            config.push_str(&format!(
+                "\n[provider]\nid = {id}\nconfirm_timeout_secs = 5\nescape_threshold_secs = 5\n"
+            ));
+        }
+        let config_path = dir.join("blobsitterd.toml");
+        std::fs::write(&config_path, config).unwrap();
+
+        let log = std::fs::File::create(dir.join("daemon.log")).unwrap();
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_blobsitterd"));
+        command.arg(&config_path).stdout(log.try_clone().unwrap()).stderr(log);
+        match provider {
+            Some((_, key)) => command.env("BLOBSITTER_OPERATOR_KEY", key),
+            None => command.env_remove("BLOBSITTER_OPERATOR_KEY"),
+        };
+        Daemon { child: command.spawn().expect("daemon binary spawns") }
+    }
+
+    pub fn frontier(dir: &Path) -> Option<blobsitter_daemon::store::Frontier> {
+        let raw = std::fs::read(dir.join("data/frontier.json")).ok()?;
+        serde_json::from_slice(&raw).ok()
+    }
+
+    pub async fn wait_for_nonce(dir: &Path, nonce: u64) -> blobsitter_daemon::store::Frontier {
+        for _ in 0..120 {
+            if let Some(f) = frontier(dir) {
+                if f.nonce >= nonce {
+                    return f;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        let log = std::fs::read_to_string(dir.join("daemon.log")).unwrap_or_default();
+        panic!("daemon never reached nonce {nonce}; log:\n{log}");
+    }
+
+    pub fn daemon_log(dir: &Path) -> String {
+        std::fs::read_to_string(dir.join("daemon.log")).unwrap_or_default()
+    }
 }

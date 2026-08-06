@@ -9,10 +9,11 @@
 
 mod common;
 
-use std::path::Path;
+use common::l2::{frontier, spawn_daemon, wait_for_nonce};
+
 use std::time::Duration;
 
-use blobsitter_daemon::store::{Frontier, Store};
+use blobsitter_daemon::store::Store;
 use blobsitter_reference::{testvec, Mmr};
 use blobsitter_testkit::anvil::{preconditions_met, Harness};
 use blobsitter_testkit::beacon_stub::BeaconStub;
@@ -29,69 +30,6 @@ fn skip_or_fail() -> bool {
     }
     eprintln!("skipping: anvil or forge artifacts unavailable");
     true
-}
-
-struct Daemon {
-    child: std::process::Child,
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn spawn_daemon(dir: &Path, harness: &Harness, stub: &BeaconStub) -> Daemon {
-    let data_dir = dir.join("data");
-    let config = format!(
-        r#"
-instance = "{instance}"
-execution_rpc = "{rpc}"
-data_dir = "{data}"
-deployment_block = {deploy}
-poll_interval_secs = 1
-
-[beacon]
-endpoints = ["{stub}"]
-genesis_time = 0
-seconds_per_slot = 1
-"#,
-        instance = harness.instance,
-        rpc = harness.endpoint,
-        data = data_dir.display(),
-        deploy = harness.instance_deploy_block,
-        stub = stub.url,
-    );
-    let config_path = dir.join("blobsitterd.toml");
-    std::fs::write(&config_path, config).unwrap();
-
-    let log = std::fs::File::create(dir.join("daemon.log")).unwrap();
-    let child = std::process::Command::new(env!("CARGO_BIN_EXE_blobsitterd"))
-        .arg(&config_path)
-        .stdout(log.try_clone().unwrap())
-        .stderr(log)
-        .spawn()
-        .expect("daemon binary spawns");
-    Daemon { child }
-}
-
-fn frontier(dir: &Path) -> Option<Frontier> {
-    let raw = std::fs::read(dir.join("data/frontier.json")).ok()?;
-    serde_json::from_slice(&raw).ok()
-}
-
-async fn wait_for_nonce(dir: &Path, nonce: u64) -> Frontier {
-    for _ in 0..120 {
-        if let Some(f) = frontier(dir) {
-            if f.nonce >= nonce {
-                return f;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    let log = std::fs::read_to_string(dir.join("daemon.log")).unwrap_or_default();
-    panic!("daemon never reached nonce {nonce}; log:\n{log}");
 }
 
 /// The core M1 scenario: declarations land as real blob txs, the daemon (own
@@ -115,7 +53,7 @@ async fn l2_declare_ingest_verify_root_and_restart() {
     }
     harness.mine(3).await.unwrap(); // finalize everything declared so far
 
-    let daemon = spawn_daemon(dir.path(), &harness, &stub);
+    let daemon = spawn_daemon(dir.path(), &harness, &stub, None);
     let f = wait_for_nonce(dir.path(), 3).await;
     assert_eq!(f.leaf_count, total);
 
@@ -136,7 +74,7 @@ async fn l2_declare_ingest_verify_root_and_restart() {
     declare_pattern(&harness, &stub, m).await.unwrap();
     harness.mine(3).await.unwrap();
 
-    let _daemon = spawn_daemon(dir.path(), &harness, &stub);
+    let _daemon = spawn_daemon(dir.path(), &harness, &stub, None);
     let f = wait_for_nonce(dir.path(), 4).await;
     assert_eq!(f.leaf_count, total + m);
     let store = {
@@ -159,7 +97,7 @@ async fn l2_d4_ingest_follows_finality() {
     let dir = tempfile::tempdir().unwrap();
 
     harness.mine(3).await.unwrap(); // let the daemon's first scan cover deployment
-    let _daemon = spawn_daemon(dir.path(), &harness, &stub);
+    let _daemon = spawn_daemon(dir.path(), &harness, &stub, None);
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Declared but NOT finalized (anvil: finalized = latest − 2).
