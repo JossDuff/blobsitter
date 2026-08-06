@@ -9,21 +9,10 @@ mod common;
 
 use std::time::Duration;
 
-use blobsitter_testkit::anvil::{preconditions_met, Harness};
+use blobsitter_testkit::anvil::Harness;
 use blobsitter_testkit::beacon_stub::BeaconStub;
 use blobsitter_testkit::declare::declare_pattern;
-use common::l2::{daemon_log, spawn_daemon, wait_for_nonce};
-
-fn skip_or_fail() -> bool {
-    if preconditions_met() {
-        return false;
-    }
-    if std::env::var_os("BLOBSITTER_REQUIRE_L2").is_some() {
-        panic!("BLOBSITTER_REQUIRE_L2 is set but anvil/forge artifacts are unavailable");
-    }
-    eprintln!("skipping: anvil or forge artifacts unavailable");
-    true
-}
+use common::l2::{daemon_log, skip_or_fail, spawn_daemon, wait_for_nonce};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn l2_d10_binary_restarts_into_an_open_challenge() {
@@ -99,4 +88,61 @@ async fn l2_d10_binary_restarts_into_an_open_challenge() {
         "custody loop never proved period 0; log:\n{}",
         daemon_log(dir.path())
     );
+}
+
+/// A halted ingest must never starve enforcement: with a later declaration blocked
+/// on a WITHHELD blob, a challenge pinned to the already-ingested state still gets
+/// answered — deadlines don't wait for blobs. (A challenge pinned PAST the halt
+/// would rightly alarm BeyondFrontier until ingest recovers; that isn't this test.)
+#[tokio::test(flavor = "multi_thread")]
+async fn l2_enforcement_runs_while_ingest_is_halted() {
+    if skip_or_fail() {
+        return;
+    }
+    let harness = Harness::spawn_with(|p| {
+        p.responseWindow = 300;
+        p.custodyPeriod = 600;
+        p.custodyK = 16;
+        p.maxSample = 8;
+    })
+    .await
+    .unwrap();
+    let stub = BeaconStub::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let operator_key = harness.dev_key(5);
+    let key_hex = format!("0x{}", hex::encode(operator_key.to_bytes()));
+    let provider_id =
+        harness.stake(operator_key.address(), harness.dev_key(6).address()).await.unwrap();
+
+    // Declared and served; the challenge pins leafCount 40 here. THEN a poisoned
+    // declaration whose blobs no source will ever serve: ingest halts at nonce 1.
+    // (warp between declarations: stub slots are block timestamps, and two blocks
+    // mined in the same wall-second would share a slot — forget must hit ONLY the
+    // poisoned one.)
+    declare_pattern(&harness, &stub, 40).await.unwrap();
+    let id = harness.open_challenge(provider_id, vec![0, 39]).await.unwrap();
+    harness.warp(5).await.unwrap();
+    let withheld = declare_pattern(&harness, &stub, 25).await.unwrap();
+    stub.forget(withheld.block_timestamp);
+    harness.mine(3).await.unwrap();
+
+    let _daemon = spawn_daemon(dir.path(), &harness, &stub, Some((provider_id, &key_hex)));
+    let contract = harness.instance_contract();
+    let mut resolved = false;
+    for _ in 0..120 {
+        harness.mine(1).await.unwrap();
+        if contract.getChallenge(id).call().await.unwrap().resolved {
+            resolved = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert!(
+        resolved,
+        "challenge went unanswered while ingest was halted; log:\n{}",
+        daemon_log(dir.path())
+    );
+    // The store never advanced past the halt, and the halt stayed loud.
+    assert_eq!(wait_for_nonce(dir.path(), 1).await.leaf_count, 40);
+    assert!(daemon_log(dir.path()).contains("unavailable from every configured source"));
 }

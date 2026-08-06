@@ -47,6 +47,18 @@ pub fn backoff_multiplier(consecutive_failures: u32) -> u32 {
     1u32 << consecutive_failures.min(5)
 }
 
+/// The event topics this daemon consumes — the getLogs filter is bounded to these so
+/// page sizes track relevant traffic, not everything the instance emits.
+const CONSUMED_TOPICS: [alloy::primitives::B256; 7] = [
+    Blobsitter::Declared::SIGNATURE_HASH,
+    Blobsitter::ChallengeOpened::SIGNATURE_HASH,
+    Blobsitter::ChallengeAnswered::SIGNATURE_HASH,
+    Blobsitter::ChallengeRefunded::SIGNATURE_HASH,
+    Blobsitter::ChallengeTimedOut::SIGNATURE_HASH,
+    Blobsitter::Slashed::SIGNATURE_HASH,
+    Blobsitter::UnbondingInitiated::SIGNATURE_HASH,
+];
+
 /// The follower's operating parameters (all from daemon config).
 pub struct FollowerConfig {
     pub instance: Address,
@@ -73,7 +85,10 @@ pub struct Follower<P: Provider> {
     /// below this, and a detected event gap rewinds all the way here.
     scan_floor: u64,
     poll_interval: Duration,
+    /// Configured getLogs page ceiling.
     log_page: u64,
+    /// Live page size: halved on provider getLogs failures, doubled back on success.
+    current_page: u64,
     consecutive_failures: u32,
 }
 
@@ -104,6 +119,7 @@ impl<P: Provider> Follower<P> {
             scan_floor: config.deployment_block.saturating_sub(1),
             poll_interval: config.poll_interval,
             log_page: config.log_page,
+            current_page: config.log_page,
             consecutive_failures: 0,
         })
     }
@@ -151,9 +167,18 @@ impl<P: Provider> Follower<P> {
         }
     }
 
-    /// One poll: scan new finalized blocks, ingest their declarations in order, then
-    /// (when fully caught up) check the local store against the contract's root.
+    /// One poll: scan new finalized blocks (declarations → ingest, the rest →
+    /// enforcement intake), then drive enforcement decisions. Enforcement runs EVEN
+    /// WHEN THE SCAN HALTS: a declaration blocked on an unfetchable blob must never
+    /// starve the challenge responder or the custody loop — deadlines don't wait for
+    /// blobs, and everything already ingested stays answerable.
     pub async fn tick(&mut self) -> Result<(), FollowerError> {
+        let scan = self.scan().await;
+        let drive = self.drive_enforcement().await;
+        scan.and(drive)
+    }
+
+    async fn scan(&mut self) -> Result<(), FollowerError> {
         let rpc = |e: alloy::transports::TransportError| FollowerError::Rpc(e.to_string());
         let finalized = self
             .provider
@@ -166,12 +191,27 @@ impl<P: Provider> Follower<P> {
 
         while self.cursor < finalized {
             let from = self.cursor + 1;
-            let to = finalized.min(self.cursor + self.log_page);
-            // Address-only filter: every event the instance emits, in log order —
-            // declarations feed the store, the rest feed enforcement.
-            let filter =
-                Filter::new().address(self.instance).from_block(from).to_block(to);
-            let logs = self.provider.get_logs(&filter).await.map_err(rpc)?;
+            let to = finalized.min(self.cursor + self.current_page);
+            // Filtered to exactly the topics this daemon consumes — an address-only
+            // query would grow with everyone's traffic — and paged ADAPTIVELY: a
+            // provider-side getLogs cap (too many logs, response too large) halves
+            // the page for the retry instead of wedging on a fixed range forever;
+            // successful pages grow back toward the configured maximum.
+            let filter = Filter::new()
+                .address(self.instance)
+                .event_signature(CONSUMED_TOPICS.to_vec())
+                .from_block(from)
+                .to_block(to);
+            let logs = match self.provider.get_logs(&filter).await {
+                Ok(logs) => {
+                    self.current_page = (self.current_page * 2).min(self.log_page);
+                    logs
+                }
+                Err(e) => {
+                    self.current_page = (self.current_page / 2).max(1);
+                    return Err(rpc(e));
+                }
+            };
 
             let mut timestamps: HashMap<u64, u64> = HashMap::new();
             for log in &logs {
@@ -180,8 +220,7 @@ impl<P: Provider> Follower<P> {
             self.set_cursor(to)?;
         }
 
-        self.check_root(finalized).await?;
-        self.drive_enforcement().await
+        self.check_root(finalized).await
     }
 
     /// Route one finalized log. Failures leave the cursor before the log's block, so

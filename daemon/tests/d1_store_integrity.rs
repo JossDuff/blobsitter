@@ -118,14 +118,8 @@ async fn d1_duplicate_blob_declaration() {
 /// path must land on exactly the state of the obviously-correct leaf-by-leaf build.
 #[tokio::test]
 async fn d1_random_shapes_fuzz() {
-    // xorshift64*: deterministic, dependency-free; reseed here only deliberately.
-    let mut state = 0x9E3779B97F4A7C15u64;
-    let mut next = move || {
-        state ^= state >> 12;
-        state ^= state << 25;
-        state ^= state >> 27;
-        state.wrapping_mul(0x2545F4914F6CDD1D)
-    };
+    // Reseed only deliberately: shapes are part of the covered space.
+    let mut next = xorshift(0x9E3779B97F4A7C15);
 
     let dir = tempfile::tempdir().unwrap();
     let mut declarations = Vec::new();

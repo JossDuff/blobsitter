@@ -8,7 +8,7 @@ use alloy::providers::{DynProvider, Provider};
 
 use crate::abi::Blobsitter;
 use crate::alarm::{AlarmSink, Severity};
-use crate::custody::{Commit, CustodyDriver, ProviderView};
+use crate::custody::{CustodyDriver, ProviderView};
 use crate::responder::{OpenChallenge, Responder};
 use crate::store::Reader;
 
@@ -105,17 +105,7 @@ impl Enforcement {
             .call()
             .await
             .map_err(|e| e.to_string())?;
-        let view = ProviderView {
-            active: p.status == Blobsitter::ProviderStatus::ACTIVE,
-            anchor: p.anchor,
-            last_proven_plus_one: p.lastProvenPlusOne,
-            commit: (p.commitPeriodPlusOne != 0).then(|| Commit {
-                period: p.commitPeriodPlusOne - 1,
-                seed: p.commitSeed.0,
-                root: p.commitRoot.0,
-                leaf_count: p.commitLeafCount,
-            }),
-        };
+        let view = ProviderView::from(&p);
 
         self.custody.drive(now, &view, reader.clone()).await;
         self.responder.drive(now, &reader);

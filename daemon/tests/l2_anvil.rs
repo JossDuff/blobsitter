@@ -9,28 +9,15 @@
 
 mod common;
 
-use common::l2::{frontier, spawn_daemon, wait_for_nonce};
+use common::l2::{frontier, skip_or_fail, spawn_daemon, wait_for_nonce};
 
 use std::time::Duration;
 
 use blobsitter_daemon::store::Store;
 use blobsitter_reference::{testvec, Mmr};
-use blobsitter_testkit::anvil::{preconditions_met, Harness};
+use blobsitter_testkit::anvil::Harness;
 use blobsitter_testkit::beacon_stub::BeaconStub;
 use blobsitter_testkit::declare::declare_pattern;
-
-/// Self-skip is for developer machines; CI sets BLOBSITTER_REQUIRE_L2=1 so a broken
-/// artifact path can never silently zero out end-to-end coverage.
-fn skip_or_fail() -> bool {
-    if preconditions_met() {
-        return false;
-    }
-    if std::env::var_os("BLOBSITTER_REQUIRE_L2").is_some() {
-        panic!("BLOBSITTER_REQUIRE_L2 is set but anvil/forge artifacts are unavailable");
-    }
-    eprintln!("skipping: anvil or forge artifacts unavailable");
-    true
-}
 
 /// The core M1 scenario: declarations land as real blob txs, the daemon (own
 /// process, production beacon adapter) ingests them once finalized, and the local

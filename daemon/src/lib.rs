@@ -17,6 +17,7 @@ pub mod custody;
 pub mod enforcement;
 pub mod follower;
 pub mod ingest;
+pub mod persist;
 pub mod proofs;
 pub mod prover;
 pub mod responder;

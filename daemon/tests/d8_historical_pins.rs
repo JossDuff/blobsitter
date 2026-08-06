@@ -30,14 +30,7 @@ async fn d8_reconstruct_any_past_pin_from_the_store() {
     }
     let reader = r.ingestor.store().reader().unwrap();
 
-    // xorshift for index picks — deterministic, dependency-free.
-    let mut state = 0xD1CEB00Cu64;
-    let mut next = move || {
-        state ^= state >> 12;
-        state ^= state << 25;
-        state ^= state >> 27;
-        state.wrapping_mul(0x2545F4914F6CDD1D)
-    };
+    let mut next = xorshift(0xD1CEB00C);
 
     let interior = [1u64, 2, 4000, 7000]; // non-boundary counts: harmless generality
     for &n in boundaries.iter().chain(&interior) {

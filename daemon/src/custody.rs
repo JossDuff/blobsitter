@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy::network::TransactionBuilder;
-use alloy::primitives::{Address, Bytes, FixedBytes, B256};
+use alloy::primitives::{Address, Bytes, B256};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol_types::SolCall;
 
@@ -38,6 +38,24 @@ pub struct ProviderView {
     /// The spec's `lastProven + 1` (0 encodes −1), exactly as the contract stores it.
     pub last_proven_plus_one: u64,
     pub commit: Option<Commit>,
+}
+
+impl From<&Blobsitter::Provider> for ProviderView {
+    /// The one decoding of the on-chain record (including the plus-one commit
+    /// convention) — production and tests must read the same view.
+    fn from(p: &Blobsitter::Provider) -> Self {
+        ProviderView {
+            active: p.status == Blobsitter::ProviderStatus::ACTIVE,
+            anchor: p.anchor,
+            last_proven_plus_one: p.lastProvenPlusOne,
+            commit: (p.commitPeriodPlusOne != 0).then(|| Commit {
+                period: p.commitPeriodPlusOne - 1,
+                seed: p.commitSeed.0,
+                root: p.commitRoot.0,
+                leaf_count: p.commitLeafCount,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -432,14 +450,7 @@ impl CustodyDriver {
                         providerId: params.provider_id,
                         n: set.n,
                         pinnedPeaks: set.peaks.iter().map(|p| B256::from(*p)).collect(),
-                        reveals: set
-                            .proven
-                            .iter()
-                            .map(|pc| Blobsitter::ChunkProof {
-                                chunk: FixedBytes::<31>::from(pc.chunk),
-                                path: pc.path.iter().map(|h| B256::from(*h)).collect(),
-                            })
-                            .collect(),
+                        reveals: set.proven.iter().map(|pc| pc.to_abi()).collect(),
                     }
                     .abi_encode(),
                 ));

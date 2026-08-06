@@ -127,6 +127,18 @@ pub fn rig(dir: &Path, sources: Vec<Box<dyn BlobSource>>) -> Rig {
     Rig { ingestor, alarm }
 }
 
+/// Deterministic, dependency-free xorshift64* — the tests' index-pick PRNG. One
+/// definition so a mistyped shift can't quietly shrink a differential test's space.
+pub fn xorshift(seed: u64) -> impl FnMut() -> u64 {
+    let mut state = seed;
+    move || {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        state.wrapping_mul(0x2545F4914F6CDD1D)
+    }
+}
+
 /// The common happy path: a rig whose single source serves the declaration's blobs.
 pub fn rig_serving(dir: &Path, declarations: &[(DeclaredEvent, Vec<RawBlob>)]) -> Rig {
     let entries = declarations.iter().flat_map(|(e, blobs)| {
@@ -141,6 +153,20 @@ pub mod l2 {
 
     use blobsitter_testkit::anvil::Harness;
     use blobsitter_testkit::beacon_stub::BeaconStub;
+
+    /// The anvil-preconditions gate every L2 suite shares. Self-skip is for
+    /// developer machines; CI sets BLOBSITTER_REQUIRE_L2=1 so a broken artifact
+    /// path can never silently zero out end-to-end coverage.
+    pub fn skip_or_fail() -> bool {
+        if blobsitter_testkit::anvil::preconditions_met() {
+            return false;
+        }
+        if std::env::var_os("BLOBSITTER_REQUIRE_L2").is_some() {
+            panic!("BLOBSITTER_REQUIRE_L2 is set but anvil/forge artifacts are unavailable");
+        }
+        eprintln!("skipping: anvil or forge artifacts unavailable");
+        true
+    }
 
     pub struct Daemon {
         child: std::process::Child,

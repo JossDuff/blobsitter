@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use alloy::network::TransactionBuilder;
-use alloy::primitives::{Address, Bytes, FixedBytes, B256};
+use alloy::primitives::{Address, Bytes, B256};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol_types::SolCall;
 use serde::{Deserialize, Serialize};
@@ -32,7 +32,7 @@ use crate::Hash;
 pub struct OpenChallenge {
     pub challenge_id: u64,
     pub indices: Vec<u64>,
-    #[serde(with = "hex_hash")]
+    #[serde(with = "crate::persist::serde_hex::hash")]
     pub pinned_root: Hash,
     pub pinned_leaf_count: u64,
     /// Chain-time instant the window closes.
@@ -40,22 +40,6 @@ pub struct OpenChallenge {
     /// Set once a response tx confirmed; cleared entries leave the ledger entirely
     /// when the resolution EVENT arrives.
     pub responded_tx: Option<String>,
-}
-
-mod hex_hash {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S: Serializer>(h: &super::Hash, s: S) -> Result<S::Ok, S::Error> {
-        format!("0x{}", hex::encode(h)).serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<super::Hash, D::Error> {
-        let raw = String::deserialize(d)?;
-        let bytes =
-            hex::decode(raw.strip_prefix("0x").unwrap_or(&raw)).map_err(serde::de::Error::custom)?;
-        super::Hash::try_from(bytes.as_slice())
-            .map_err(|_| serde::de::Error::custom("hash is not 32 bytes"))
-    }
 }
 
 /// The persistent ledger: every mutation lands on disk (tmp + rename, same pattern
@@ -78,11 +62,8 @@ impl Ledger {
     }
 
     fn persist(&self) -> Result<(), String> {
-        let tmp = self.path.with_extension("json.tmp");
         let bytes = serde_json::to_vec_pretty(&self.entries).expect("ledger serializes");
-        std::fs::write(&tmp, &bytes)
-            .and_then(|()| std::fs::File::open(&tmp)?.sync_all())
-            .and_then(|()| std::fs::rename(&tmp, &self.path))
+        crate::persist::write_atomic(&self.path, &bytes)
             .map_err(|e| format!("cannot persist challenge ledger: {e}"))
     }
 
@@ -281,14 +262,7 @@ impl Responder {
                     indices: entry.indices.clone(),
                     n: set.n,
                     pinnedPeaks: set.peaks.iter().map(|p| B256::from(*p)).collect(),
-                    proofs: set
-                        .proven
-                        .iter()
-                        .map(|pc| Blobsitter::ChunkProof {
-                            chunk: FixedBytes::<31>::from(pc.chunk),
-                            path: pc.path.iter().map(|h| B256::from(*h)).collect(),
-                        })
-                        .collect(),
+                    proofs: set.proven.iter().map(|pc| pc.to_abi()).collect(),
                 }
                 .abi_encode(),
             ));

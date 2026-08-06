@@ -42,6 +42,18 @@ pub struct ProvenChunk {
     pub path: Vec<Hash>,
 }
 
+impl ProvenChunk {
+    /// The contract-calldata form — used by `respond` proofs and
+    /// `submitProofEscape` reveals alike, so the two slashing-critical encoders can
+    /// never diverge.
+    pub fn to_abi(&self) -> crate::abi::Blobsitter::ChunkProof {
+        crate::abi::Blobsitter::ChunkProof {
+            chunk: alloy::primitives::FixedBytes::<31>::from(self.chunk),
+            path: self.path.iter().map(|h| alloy::primitives::B256::from(*h)).collect(),
+        }
+    }
+}
+
 /// Everything a pinned-state response needs: the peak list to re-bag on chain and
 /// the per-index proofs, in the caller's index order (duplicates included).
 #[derive(Debug, Clone)]

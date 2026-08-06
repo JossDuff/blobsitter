@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy::network::{EthereumWallet, TransactionBuilder};
-use alloy::primitives::{Address, Bytes, FixedBytes, B256, U256};
+use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
 use alloy::signers::local::PrivateKeySigner;
@@ -21,25 +21,15 @@ use alloy::sol_types::SolCall;
 
 use blobsitter_daemon::abi::Blobsitter;
 use blobsitter_daemon::alarm::CapturingAlarm;
-use blobsitter_daemon::custody::{Commit, CustodyDriver, CustodyParams, ProviderView};
+use blobsitter_daemon::custody::{CustodyDriver, CustodyParams, ProviderView};
 use blobsitter_daemon::proofs::build_proof_set;
 use blobsitter_daemon::prover::{NoProver, StubProver};
 use blobsitter_daemon::responder::{Ledger, OpenChallenge, Responder};
 use blobsitter_daemon::store::Reader;
 use blobsitter_daemon::tx::TxSender;
-use blobsitter_testkit::anvil::{preconditions_met, Harness};
+use blobsitter_testkit::anvil::Harness;
+use common::l2::skip_or_fail;
 use common::*;
-
-fn skip_or_fail() -> bool {
-    if preconditions_met() {
-        return false;
-    }
-    if std::env::var_os("BLOBSITTER_REQUIRE_L2").is_some() {
-        panic!("BLOBSITTER_REQUIRE_L2 is set but anvil/forge artifacts are unavailable");
-    }
-    eprintln!("skipping: anvil or forge artifacts unavailable");
-    true
-}
 
 /// Everything an in-process enforcement test needs: a compressed-window instance, a
 /// staked provider with a funded operator wallet, and a store mirroring the chain.
@@ -85,17 +75,7 @@ impl Rig2 {
 
     async fn provider_view(&self) -> ProviderView {
         let p = self.contract.getProvider(self.provider_id).call().await.unwrap();
-        ProviderView {
-            active: p.status == Blobsitter::ProviderStatus::ACTIVE,
-            anchor: p.anchor,
-            last_proven_plus_one: p.lastProvenPlusOne,
-            commit: (p.commitPeriodPlusOne != 0).then(|| Commit {
-                period: p.commitPeriodPlusOne - 1,
-                seed: p.commitSeed.0,
-                root: p.commitRoot.0,
-                leaf_count: p.commitLeafCount,
-            }),
-        }
+        ProviderView::from(&p)
     }
 
     fn custody_params(&self, escape_threshold: u64) -> CustodyParams {
@@ -193,14 +173,7 @@ async fn respond(rig2: &Rig2, id: u64, indices: &[u64]) {
                 indices: indices.to_vec(),
                 n: set.n,
                 pinnedPeaks: set.peaks.iter().map(|p| B256::from(*p)).collect(),
-                proofs: set
-                    .proven
-                    .iter()
-                    .map(|pc| Blobsitter::ChunkProof {
-                        chunk: FixedBytes::<31>::from(pc.chunk),
-                        path: pc.path.iter().map(|h| B256::from(*h)).collect(),
-                    })
-                    .collect(),
+                proofs: set.proven.iter().map(|pc| pc.to_abi()).collect(),
             }
             .abi_encode(),
         ),
@@ -229,13 +202,7 @@ async fn l2_d7_response_differential() {
     // Grow past a blob boundary, then open a spread of challenges pinned NOW.
     r.declare_and_ingest(4_500).await;
     let n = 4_501u64;
-    let mut state = 0xC0FFEEu64;
-    let mut next = move || {
-        state ^= state >> 12;
-        state ^= state << 25;
-        state ^= state >> 27;
-        state.wrapping_mul(0x2545F4914F6CDD1D)
-    };
+    let mut next = xorshift(0xC0FFEE);
     let mut cases: Vec<Vec<u64>> = vec![
         vec![0],
         vec![n - 1],
