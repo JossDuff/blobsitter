@@ -10,6 +10,7 @@
 //!   crash-isolated materializer, a separate process in a separate crate; nothing
 //!   app-layer may ever be imported here.
 
+pub mod abi;
 pub mod alarm;
 pub mod config;
 pub mod follower;
@@ -19,10 +20,8 @@ pub mod store;
 pub mod verify;
 
 /// Re-exported so daemon code and tests spell protocol types one way.
+pub use blobsitter_reference::blob::BLOB_BYTES;
 pub use blobsitter_reference::{Chunk, Hash};
-
-/// One EIP-4844 blob: 4096 field elements of 32 bytes.
-pub const BLOB_BYTES: usize = 4096 * 32;
 
 /// A raw, UNVERIFIED blob as fetched from some source. Boxed: 128 KiB doesn't belong
 /// on the stack.

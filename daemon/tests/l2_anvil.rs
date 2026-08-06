@@ -18,6 +18,19 @@ use blobsitter_testkit::anvil::{preconditions_met, Harness};
 use blobsitter_testkit::beacon_stub::BeaconStub;
 use blobsitter_testkit::declare::declare_pattern;
 
+/// Self-skip is for developer machines; CI sets BLOBSITTER_REQUIRE_L2=1 so a broken
+/// artifact path can never silently zero out end-to-end coverage.
+fn skip_or_fail() -> bool {
+    if preconditions_met() {
+        return false;
+    }
+    if std::env::var_os("BLOBSITTER_REQUIRE_L2").is_some() {
+        panic!("BLOBSITTER_REQUIRE_L2 is set but anvil/forge artifacts are unavailable");
+    }
+    eprintln!("skipping: anvil or forge artifacts unavailable");
+    true
+}
+
 struct Daemon {
     child: std::process::Child,
 }
@@ -86,8 +99,7 @@ async fn wait_for_nonce(dir: &Path, nonce: u64) -> Frontier {
 /// store is bit-for-bit the dataset the contract committed to.
 #[tokio::test(flavor = "multi_thread")]
 async fn l2_declare_ingest_verify_root_and_restart() {
-    if !preconditions_met() {
-        eprintln!("skipping: anvil or forge artifacts unavailable");
+    if skip_or_fail() {
         return;
     }
     let harness = Harness::spawn().await.unwrap();
@@ -139,8 +151,7 @@ async fn l2_declare_ingest_verify_root_and_restart() {
 /// to the store; it is ingested only once anvil's finalized tag passes its block.
 #[tokio::test(flavor = "multi_thread")]
 async fn l2_d4_ingest_follows_finality() {
-    if !preconditions_met() {
-        eprintln!("skipping: anvil or forge artifacts unavailable");
+    if skip_or_fail() {
         return;
     }
     let harness = Harness::spawn().await.unwrap();

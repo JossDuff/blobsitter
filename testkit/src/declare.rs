@@ -15,12 +15,11 @@ use alloy::signers::SignerSync;
 use alloy::sol_types::SolCall;
 
 use blobsitter_reference::{blob, eip712, fs_z, testvec, update_subtree_roots, Chunk, Hash};
-use sha2::{Digest, Sha256};
 
 use crate::anvil::{Harness, HarnessError, Instance};
 use crate::beacon_stub::BeaconStub;
 
-pub const BLOB_BYTES: usize = 4096 * 32;
+pub use blobsitter_reference::blob::BLOB_BYTES;
 
 /// What a completed declaration left behind — everything a test needs to feed blob
 /// sources and check daemon state against.
@@ -35,25 +34,9 @@ pub struct DeclarationOutcome {
     pub blobs: Vec<Vec<u8>>,
 }
 
-/// Pack chunks into canonical blobs (§4): element `u mod 4096` of blob `⌊u/4096⌋`,
-/// high byte zero, trailing elements zero.
-pub fn pack_blobs(chunks: &[Chunk]) -> Vec<Vec<u8>> {
-    chunks
-        .chunks(4096)
-        .map(|slice| {
-            let elements = blob::elements_from_chunks(slice);
-            let mut raw = vec![0u8; BLOB_BYTES];
-            for (e, element) in elements.iter().enumerate() {
-                raw[e * 32..(e + 1) * 32].copy_from_slice(element);
-            }
-            raw
-        })
-        .collect()
-}
-
 /// Declare `m` pattern chunks (`testvec::chunk` at the global index) on top of the
-/// instance's current state, and register the blobs with the beacon stub so the
-/// daemon's production adapter can fetch them.
+/// instance's current state — packed by the reference's canonical rule — and register
+/// the blobs with the beacon stub so the daemon's production adapter can fetch them.
 pub async fn declare_pattern(
     harness: &Harness,
     stub: &BeaconStub,
@@ -73,7 +56,7 @@ pub async fn declare_pattern(
         .collect();
 
     let chunks: Vec<Chunk> = (n0..n0 + m).map(testvec::chunk).collect();
-    let blobs = pack_blobs(&chunks);
+    let blobs = blob::pack(&chunks);
     let new_subtree_peaks = update_subtree_roots(n0, &chunks);
 
     // Real KZG: commitment → versioned hash, then the opening at the Fiat–Shamir
@@ -85,9 +68,7 @@ pub async fn declare_pattern(
         let kzg_blob = c_kzg::Blob::from_bytes(raw).map_err(|e| rpc(e.to_string()))?;
         let commitment =
             settings.blob_to_kzg_commitment(&kzg_blob).map_err(|e| rpc(e.to_string()))?;
-        let mut vh: Hash = Sha256::digest(commitment.to_bytes().as_slice()).into();
-        vh[0] = 0x01;
-        versioned_hashes.push(vh);
+        versioned_hashes.push(blob::versioned_hash(&commitment.to_bytes().into_inner()));
         commitments.push(commitment.to_bytes());
     }
 

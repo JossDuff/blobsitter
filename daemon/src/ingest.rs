@@ -97,7 +97,7 @@ impl Ingestor {
             block_number: event.block_number,
             block_timestamp: event.block_timestamp,
         };
-        let mut blobs = self
+        let blobs = self
             .sources
             .acquire(&ctx, &event.blob_versioned_hashes, self.alarm.as_ref())
             .await
@@ -110,10 +110,12 @@ impl Ingestor {
                 ));
                 IngestError::BlobsUnavailable { nonce: event.nonce, source }
             })?;
+        // Lookup, not removal: a declaration may legally repeat a versioned hash
+        // (identical blob content twice), and one verified blob serves every copy.
         let ordered: Vec<_> = event
             .blob_versioned_hashes
             .iter()
-            .map(|vh| blobs.remove(vh).expect("acquire returned complete or errored"))
+            .map(|vh| blobs.get(vh).cloned().expect("acquire returned complete or errored"))
             .collect();
 
         // Unpack chunks and prove they are THE committed bytes: the subtree roots

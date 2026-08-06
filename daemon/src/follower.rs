@@ -18,28 +18,11 @@ use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::Address;
 use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, Log};
-use alloy::sol;
 use alloy::sol_types::SolEvent;
 
+use crate::abi::Blobsitter;
 use crate::alarm::{AlarmSink, Severity};
 use crate::ingest::{DeclaredEvent, IngestError, Ingestor};
-
-sol! {
-    #[sol(rpc)]
-    contract Blobsitter {
-        event Declared(
-            uint64 indexed nonce,
-            uint64 newLeafCount,
-            bytes32[] blobVersionedHashes,
-            bytes32[] newSubtreePeaks,
-            bytes32 appPointer,
-            address carrier
-        );
-        function leafCount() external view returns (uint64);
-        function declarationNonce() external view returns (uint64);
-        function root() external view returns (bytes32);
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum FollowerError {
@@ -47,7 +30,14 @@ pub enum FollowerError {
     Rpc(String),
     #[error("cursor file error: {0}")]
     Cursor(String),
+    #[error("ingest halted at declaration {nonce}: {reason}")]
+    Halted { nonce: u64, reason: String },
 }
+
+/// Consecutive failed ticks before the follower escalates from log-level noise to a
+/// real alarm. At the default 12 s poll this is ~2 minutes of a dead RPC — long
+/// enough to skip transient blips, far inside every protocol window.
+const TICK_FAILURES_BEFORE_ALARM: u32 = 10;
 
 /// The follower's operating parameters (all from daemon config).
 pub struct FollowerConfig {
@@ -68,8 +58,12 @@ pub struct Follower<P: Provider> {
     cursor_path: PathBuf,
     /// Last block whose declarations are fully ingested; scanning resumes after it.
     cursor: u64,
+    /// Where a full rescan starts (block before deployment); the cursor never goes
+    /// below this, and a detected event gap rewinds all the way here.
+    scan_floor: u64,
     poll_interval: Duration,
     log_page: u64,
+    consecutive_failures: u32,
 }
 
 impl<P: Provider> Follower<P> {
@@ -94,8 +88,10 @@ impl<P: Provider> Follower<P> {
             alarm,
             cursor_path,
             cursor,
+            scan_floor: config.deployment_block.saturating_sub(1),
             poll_interval: config.poll_interval,
             log_page: config.log_page,
+            consecutive_failures: 0,
         })
     }
 
@@ -108,10 +104,33 @@ impl<P: Provider> Follower<P> {
     /// every fault is to keep trying and keep alarming, never to skip.
     pub async fn run(&mut self) -> ! {
         loop {
-            if let Err(e) = self.tick().await {
-                tracing::warn!("follower tick failed (will retry): {e}");
-            }
+            self.poll_once().await;
             tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+
+    /// One tick plus its failure accounting (the loop body of [`Self::run`], public
+    /// so liveness tests can drive it directly). A single failed tick is log noise;
+    /// a RUN of them means the daemon is not meeting its duties (dead RPC, revoked
+    /// key, persistent halt) and must page a human — re-alarming on every further
+    /// threshold multiple so the page cannot be missed while the condition lasts.
+    pub async fn poll_once(&mut self) {
+        match self.tick().await {
+            Ok(()) => self.consecutive_failures = 0,
+            Err(err) => {
+                tracing::warn!("follower tick failed (will retry): {err}");
+                self.consecutive_failures += 1;
+                if self.consecutive_failures.is_multiple_of(TICK_FAILURES_BEFORE_ALARM) {
+                    self.alarm.alarm(
+                        Severity::Critical,
+                        &format!(
+                            "follower has failed {} consecutive ticks; the daemon is NOT \
+                             following the chain. Last error: {err}",
+                            self.consecutive_failures
+                        ),
+                    );
+                }
+            }
         }
     }
 
@@ -143,12 +162,30 @@ impl<P: Provider> Follower<P> {
                 let event = self.declared_event(log, &mut timestamps).await?;
                 match self.ingestor.ingest(&event).await {
                     Ok(_) => {}
+                    Err(IngestError::NonceGap { expected, got }) => {
+                        // The missing nonce's log is in a block we already scanned
+                        // PAST (a provider dropped it from a getLogs page), so
+                        // rewinding near this event can never recover it. Rewind to
+                        // the floor: the full rescan is cheap insurance — every
+                        // already-committed nonce dies on the redelivery check.
+                        self.set_cursor(self.scan_floor)?;
+                        return Err(FollowerError::Halted {
+                            nonce: expected,
+                            reason: format!(
+                                "nonce {got} observed while {expected} was never seen; \
+                                 rescanning from deployment"
+                            ),
+                        });
+                    }
                     Err(err) => {
                         // Halt AT this declaration: commit the cursor to just before
                         // its block so every later tick re-lands here until the
                         // blockage clears. The alarm already fired inside ingest.
                         self.set_cursor(event.block_number.saturating_sub(1))?;
-                        return Err(FollowerError::Rpc(halt_message(&err)));
+                        return Err(FollowerError::Halted {
+                            nonce: event.nonce,
+                            reason: err.to_string(),
+                        });
                     }
                 }
             }
@@ -198,6 +235,13 @@ impl<P: Provider> Follower<P> {
     /// contract committed to. Compared at the finalized block the scan just reached,
     /// so contract state and cursor describe the same instant.
     async fn check_root(&self, finalized: u64) -> Result<(), FollowerError> {
+        if finalized < self.cursor {
+            // A lagging or freshly rotated RPC node whose finalized tag is behind
+            // state we already ingested: comparing against its older view would
+            // fire a false "store disagrees with L1" — the one alarm that must
+            // never cry wolf. Skip; the check runs again when the node catches up.
+            return Ok(());
+        }
         let contract = Blobsitter::new(self.instance, &self.provider);
         let at = alloy::eips::BlockId::number(finalized);
         let chain_leaf_count = contract
@@ -238,8 +282,4 @@ impl<P: Provider> Follower<P> {
         self.cursor = block;
         Ok(())
     }
-}
-
-fn halt_message(err: &IngestError) -> String {
-    format!("ingest halted: {err}")
 }

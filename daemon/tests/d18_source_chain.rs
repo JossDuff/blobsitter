@@ -75,6 +75,47 @@ async fn d18_partial_fill_across_sources() {
     assert_eq!(r.ingestor.store().frontier().leaf_count, 4097);
 }
 
+/// A 200 with an empty (or short) blob list is a miss, not an answer: the beacon
+/// adapter must keep walking its endpoint list — a pruned or under-custodying node
+/// answers politely with nothing, and the fallback that has the data must be asked.
+/// Driven over real HTTP against two beacon-shaped stubs so the production adapter
+/// is what's under test.
+#[tokio::test(flavor = "multi_thread")]
+async fn d18_beacon_empty_200_falls_through_to_next_endpoint() {
+    use blobsitter_daemon::source::beacon::BeaconSource;
+    use blobsitter_daemon::source::BlobContext;
+    use blobsitter_daemon::verify;
+    use blobsitter_testkit::beacon_stub::BeaconStub;
+
+    let (event, blobs) = declaration(0, 0, 12);
+    let vh = event.blob_versioned_hashes[0];
+    let slot = event.block_timestamp; // stub slots are timestamps (genesis 0, spt 1)
+
+    let pruned = BeaconStub::spawn().await;
+    pruned.register(slot, vec![]); // knows the slot, serves nothing: 200 + []
+    let healthy = BeaconStub::spawn().await;
+    healthy.register(slot, vec![(vh, blobs[0].to_vec())]);
+
+    let source = BeaconSource::new(vec![pruned.url.clone(), healthy.url.clone()], 0, 1);
+    let ctx = BlobContext { block_number: event.block_number, block_timestamp: slot };
+    let got = source.fetch(&ctx, &[vh]).await.expect("second endpoint serves");
+    assert_eq!(got.len(), 1);
+    assert_eq!(verify::versioned_hash(&got[0]).unwrap(), vh);
+}
+
+/// A beacon config pointing at the wrong chain (genesis after the block timestamp)
+/// must fail with an error that blames the config, not the blob sources.
+#[tokio::test]
+async fn d18_beacon_genesis_mismatch_is_a_config_error() {
+    use blobsitter_daemon::source::beacon::BeaconSource;
+    use blobsitter_daemon::source::BlobContext;
+
+    let source = BeaconSource::new(vec!["http://127.0.0.1:1".into()], 2_000_000_000, 12);
+    let ctx = BlobContext { block_number: 1, block_timestamp: 1_700_000_000 };
+    let err = source.fetch(&ctx, &[[0u8; 32]]).await.unwrap_err();
+    assert!(err.to_string().contains("different chain"), "got: {err}");
+}
+
 /// Bootstrap after the retention window: no near-head source has anything; a single
 /// archive-style source (per-hash lookup, ignores block context) fills the entire
 /// transcript from an empty store.

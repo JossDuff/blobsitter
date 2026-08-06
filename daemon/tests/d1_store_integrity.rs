@@ -79,6 +79,41 @@ async fn d1_flat_file_layout() {
     assert!(rig.ingestor.store().chunk(13).is_err(), "reads are bounded by the frontier");
 }
 
+/// A declaration whose two blobs are byte-identical (legal opaque data) carries the
+/// same versioned hash twice; one verified blob must serve both copies and the store
+/// must commit all 8192 chunks.
+#[tokio::test]
+async fn d1_duplicate_blob_declaration() {
+    use blobsitter_daemon::ingest::DeclaredEvent;
+    use blobsitter_daemon::verify;
+    use blobsitter_reference::update_subtree_roots;
+
+    let dir = tempfile::tempdir().unwrap();
+    let chunks: Vec<_> =
+        (0..4096).map(testvec::chunk).chain((0..4096).map(testvec::chunk)).collect();
+    let blobs = pack_blobs(&chunks);
+    assert_eq!(blobs[0], blobs[1], "identical content must produce identical blobs");
+    let vh = verify::versioned_hash(&blobs[0]).unwrap();
+
+    let event = DeclaredEvent {
+        nonce: 0,
+        new_leaf_count: 8192,
+        blob_versioned_hashes: vec![vh, vh],
+        new_subtree_peaks: update_subtree_roots(0, &chunks),
+        block_number: 1_000,
+        block_timestamp: 1_700_000_000,
+    };
+    let mut r = rig(
+        dir.path(),
+        vec![Box::new(MockSource::serving("primary", [(vh, blobs[0].clone())]))],
+    );
+    assert!(r.ingestor.ingest(&event).await.unwrap());
+    let store = r.ingestor.store();
+    assert_eq!(store.frontier().leaf_count, 8192);
+    assert_eq!(store.chunk(4096 + 7).unwrap(), testvec::chunk(7), "second copy readable");
+    assert!(r.alarm.criticals().is_empty());
+}
+
 /// Random declaration shapes (m, blob count, partial final blobs): the batched ingest
 /// path must land on exactly the state of the obviously-correct leaf-by-leaf build.
 #[tokio::test]

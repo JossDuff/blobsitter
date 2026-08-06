@@ -15,22 +15,14 @@ use blobsitter_daemon::ingest::{DeclaredEvent, Ingestor};
 use blobsitter_daemon::source::{BlobContext, BlobSource, SourceChain, SourceError};
 use blobsitter_daemon::store::Store;
 use blobsitter_daemon::verify;
-use blobsitter_daemon::{Hash, RawBlob, BLOB_BYTES};
+use blobsitter_daemon::{Hash, RawBlob};
 use blobsitter_reference::{blob, testvec, update_subtree_roots, Chunk};
 
-/// Pack chunks into canonical blobs: element `u mod 4096` of blob `⌊u/4096⌋`, high
-/// byte zero, trailing elements zero.
+/// The reference packing, boxed into the daemon's `RawBlob` shape.
 pub fn pack_blobs(chunks: &[Chunk]) -> Vec<RawBlob> {
-    chunks
-        .chunks(4096)
-        .map(|slice| {
-            let elements = blob::elements_from_chunks(slice);
-            let mut raw = vec![0u8; BLOB_BYTES];
-            for (e, element) in elements.iter().enumerate() {
-                raw[e * 32..(e + 1) * 32].copy_from_slice(element);
-            }
-            RawBlob::try_from(raw.into_boxed_slice()).unwrap()
-        })
+    blob::pack(chunks)
+        .into_iter()
+        .map(|raw| RawBlob::try_from(raw.into_boxed_slice()).unwrap())
         .collect()
 }
 

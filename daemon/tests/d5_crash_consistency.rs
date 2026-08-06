@@ -69,6 +69,7 @@ async fn d5_crash_after_append_before_commit() {
     // Re-ingest is idempotent: same declaration, same offsets, same final state.
     let mut r = rig_serving(dir.path(), &[next.clone()]);
     assert!(r.ingestor.ingest(&next.0).await.unwrap());
+    drop(r); // release the store lock before inspecting from a fresh open
     reopen_and_check(dir.path(), n + 7);
 }
 
@@ -96,6 +97,39 @@ async fn d5_leftover_frontier_tmp_is_ignored() {
     let n = ingest_some(dir.path(), 2).await;
     std::fs::write(dir.path().join("frontier.json.tmp"), b"{ torn garbage").unwrap();
     reopen_and_check(dir.path(), n);
+}
+
+/// A LOST frontier beside a populated chunk file is damage too: treating it as a
+/// fresh store would truncate the entire dataset — the store must refuse instead.
+#[tokio::test]
+async fn d5_missing_frontier_beside_data_refuses_to_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let n = ingest_some(dir.path(), 2).await;
+    std::fs::remove_file(dir.path().join("frontier.json")).unwrap();
+
+    match Store::open(dir.path()) {
+        Err(StoreError::OrphanedChunkData { bytes }) => assert_eq!(bytes, n * 31),
+        other => panic!("expected OrphanedChunkData, got {:?}", other.err()),
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("chunks.dat")).unwrap().len() as u64,
+        n * 31,
+        "refusal must not touch the data"
+    );
+}
+
+/// One daemon per store: a second opener must be rejected by the directory lock —
+/// its crash recovery would truncate the first daemon's in-flight appends.
+#[tokio::test]
+async fn d5_second_opener_is_locked_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = Store::open(dir.path()).unwrap();
+    match Store::open(dir.path()) {
+        Err(StoreError::Locked(_)) => {}
+        other => panic!("expected Locked, got {:?}", other.err()),
+    }
+    drop(first);
+    Store::open(dir.path()).expect("lock releases with the holder");
 }
 
 /// Committed data MISSING (file shorter than the frontier) is damage, not a crash

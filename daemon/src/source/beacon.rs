@@ -32,8 +32,17 @@ impl BeaconSource {
         Self { endpoints, genesis_time, seconds_per_slot, client: reqwest::Client::new() }
     }
 
-    fn slot_for(&self, block_timestamp: u64) -> u64 {
-        (block_timestamp - self.genesis_time) / self.seconds_per_slot
+    fn slot_for(&self, block_timestamp: u64) -> Result<u64, SourceError> {
+        let elapsed = block_timestamp.checked_sub(self.genesis_time).ok_or_else(|| {
+            SourceError(format!(
+                "beacon genesis_time {} is after block timestamp {block_timestamp} — the \
+                 beacon config points at a different chain than the execution RPC",
+                self.genesis_time
+            ))
+        })?;
+        // seconds_per_slot is validated nonzero at config load; max(1) keeps a
+        // hand-constructed source from dividing by zero anyway.
+        Ok(elapsed / self.seconds_per_slot.max(1))
     }
 }
 
@@ -48,7 +57,7 @@ impl BlobSource for BeaconSource {
         ctx: &BlobContext,
         wanted: &[Hash],
     ) -> Result<Vec<RawBlob>, SourceError> {
-        let slot = self.slot_for(ctx.block_timestamp);
+        let slot = self.slot_for(ctx.block_timestamp)?;
         // Repeated query params — the OpenAPI default array form. NOTE: not yet
         // exercised against a production beacon node (only against the harness stub);
         // re-verify the array style when the first real deployment is wired up.
@@ -57,6 +66,12 @@ impl BlobSource for BeaconSource {
             .map(|vh| ("versioned_hashes", format!("0x{}", hex::encode(vh))))
             .collect();
 
+        // A 200 is not an answer — a node that pruned the slot (or, post-PeerDAS,
+        // custodies too few columns) replies 200 with fewer blobs than asked, and
+        // the whole point of multiple endpoints is to keep going in that case.
+        // Candidates accumulate across endpoints until the COUNT covers the request
+        // (identity is the caller's verify step); partial beats empty at the end.
+        let mut collected: Vec<RawBlob> = Vec::new();
         let mut last_err = "no beacon endpoints configured".to_string();
         for endpoint in &self.endpoints {
             let url = format!("{}/eth/v1/beacon/blobs/{slot}", endpoint.trim_end_matches('/'));
@@ -77,12 +92,30 @@ impl BlobSource for BeaconSource {
             }
             .await;
             match result {
-                Ok(blobs) => return Ok(blobs),
+                Ok(mut blobs) => {
+                    let short = blobs.len() < wanted.len();
+                    collected.append(&mut blobs);
+                    if collected.len() >= wanted.len() {
+                        return Ok(collected);
+                    }
+                    if short {
+                        tracing::warn!(
+                            endpoint,
+                            slot,
+                            "beacon endpoint answered with fewer blobs than requested; \
+                             trying the next endpoint"
+                        );
+                        last_err = format!("{url} served a partial or empty blob set");
+                    }
+                }
                 Err(e) => {
                     tracing::warn!(endpoint, slot, "beacon endpoint failed: {e}");
                     last_err = e;
                 }
             }
+        }
+        if !collected.is_empty() {
+            return Ok(collected);
         }
         Err(SourceError(format!("all beacon endpoints failed for slot {slot}: {last_err}")))
     }

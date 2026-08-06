@@ -15,6 +15,8 @@ pub enum ConfigError {
     Parse(#[from] toml::de::Error),
     #[error("config references undefined environment variable {0}")]
     MissingEnv(String),
+    #[error("invalid config: {0}")]
+    Invalid(String),
 }
 
 #[derive(Deserialize)]
@@ -74,6 +76,12 @@ impl Config {
         let raw = std::fs::read_to_string(path)
             .map_err(|e| ConfigError::Read(path.into(), e))?;
         let mut config: Config = toml::from_str(&raw)?;
+        if config.beacon.seconds_per_slot == 0 {
+            return Err(ConfigError::Invalid("beacon.seconds_per_slot must be nonzero".into()));
+        }
+        if config.beacon.endpoints.is_empty() {
+            return Err(ConfigError::Invalid("beacon.endpoints must not be empty".into()));
+        }
         config.execution_rpc = expand_env(&config.execution_rpc)?;
         for endpoint in &mut config.beacon.endpoints {
             *endpoint = expand_env(endpoint)?;

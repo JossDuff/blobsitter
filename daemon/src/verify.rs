@@ -5,8 +5,7 @@
 //! Corruption is therefore impossible to smuggle in; the only failure mode any source
 //! retains is withholding.
 
-use blobsitter_reference::{Chunk, Hash};
-use sha2::{Digest, Sha256};
+use blobsitter_reference::{blob, Chunk, Hash};
 
 use crate::{RawBlob, BLOB_BYTES};
 
@@ -25,16 +24,14 @@ pub enum VerifyError {
 /// The versioned hash a blob would have on chain: `0x01 ‖ sha256(commitment)[1:]`.
 /// Computing the commitment is the expensive step (~ms per blob) and is exactly the
 /// check that makes every source trustless.
-pub fn versioned_hash(blob: &RawBlob) -> Result<Hash, VerifyError> {
+pub fn versioned_hash(raw: &RawBlob) -> Result<Hash, VerifyError> {
     let settings = c_kzg::ethereum_kzg_settings(0);
-    let blob = c_kzg::Blob::from_bytes(blob.as_slice())
+    let kzg_blob = c_kzg::Blob::from_bytes(raw.as_slice())
         .map_err(|e| VerifyError::InvalidBlob(e.to_string()))?;
     let commitment = settings
-        .blob_to_kzg_commitment(&blob)
+        .blob_to_kzg_commitment(&kzg_blob)
         .map_err(|e| VerifyError::InvalidBlob(e.to_string()))?;
-    let mut vh: Hash = Sha256::digest(commitment.to_bytes().as_slice()).into();
-    vh[0] = 0x01;
-    Ok(vh)
+    Ok(blob::versioned_hash(&commitment.to_bytes().into_inner()))
 }
 
 /// Unpack an update's `m` chunks from its verified blobs: local chunk `u` sits in blob

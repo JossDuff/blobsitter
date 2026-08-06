@@ -7,8 +7,10 @@ description = "Anvil integration harness: real contracts, real blob txs, mock ve
 
 [dependencies]
 blobsitter-reference = { path = "../reference" }
+# One contract ABI transcription for all Rust consumers (daemon/src/abi.rs). The
+# reverse edge (daemon -> testkit) is dev-only, so this is not a dependency cycle.
+blobsitter-daemon = { path = "../daemon" }
 c-kzg = { version = "2", features = ["ethereum_kzg_settings"] }
-sha2 = "0.10"
 alloy = { version = "2", features = [
     "providers",
     "contract",

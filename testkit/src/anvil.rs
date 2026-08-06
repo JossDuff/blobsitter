@@ -10,68 +10,18 @@ use std::path::PathBuf;
 
 use alloy::network::{EthereumWallet, TransactionBuilder};
 use alloy::node_bindings::{Anvil, AnvilInstance};
-use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy::primitives::{keccak256, Address, Bytes, U256};
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
 use alloy::signers::local::PrivateKeySigner;
-use alloy::sol;
 use alloy::sol_types::SolValue;
+
+/// The single ABI transcription every Rust consumer shares.
+pub use blobsitter_daemon::abi::Blobsitter as Instance;
 
 /// The template constant `BlobsitterInstance.SP1_VERIFIER`.
 pub const SP1_VERIFIER: Address =
     alloy::primitives::address!("0x3B6041173B80E77f038f3F2C0f9744f04837185e");
-
-sol! {
-    #[sol(rpc)]
-    #[derive(Debug)]
-    contract Instance {
-        struct Params {
-            address publisher;
-            uint256 stakeWei;
-            uint64 responseWindow;
-            uint64 unbondingDelay;
-            uint64 custodyPeriod;
-            uint64 lapseGrace;
-            uint32 custodyK;
-            uint16 maxSample;
-            uint16 bountyBps;
-            uint256 carrierTipWei;
-            uint256 provingSubsidyWei;
-            uint256 bucketRateWeiPerDay;
-            uint256 bucketCapWei;
-            uint64 dormancyWindow;
-            uint64 dormancyMinChunks;
-        }
-
-        struct Declaration {
-            uint64 nonce;
-            uint64 deadline;
-            bytes32[] blobVersionedHashes;
-            bytes32[] newSubtreePeaks;
-            uint64 newLeafCount;
-            address designatedCarrier;
-            bytes32 appPointer;
-        }
-
-        struct BlobOpening {
-            bytes32 y;
-            bytes commitment;
-            bytes kzgProof;
-        }
-
-        function declareFor(
-            Declaration d,
-            bytes publisherSig,
-            BlobOpening[] openings,
-            bytes equivalenceProof
-        ) external;
-
-        function leafCount() external view returns (uint64);
-        function declarationNonce() external view returns (uint64);
-        function allPeaks() external view returns (bytes32[] memory);
-        function root() external view returns (bytes32);
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum HarnessError {
@@ -212,7 +162,7 @@ impl Harness {
         })
     }
 
-    pub fn instance_contract(&self) -> Instance::InstanceInstance<DynProvider> {
+    pub fn instance_contract(&self) -> Instance::BlobsitterInstance<DynProvider> {
         Instance::new(self.instance, self.provider.clone())
     }
 
@@ -261,9 +211,4 @@ async fn deploy(
             .ok_or_else(|| HarnessError::Rpc("no contract address in receipt".into()))?,
         receipt.block_number.unwrap_or_default(),
     ))
-}
-
-/// Compile-time-visible B256 helper for tests.
-pub fn b256(bytes: [u8; 32]) -> B256 {
-    B256::from(bytes)
 }
