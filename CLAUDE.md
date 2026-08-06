@@ -43,8 +43,13 @@ and bonded storage providers accountable via challenges and slashing.
 
 ## Commands
 
-- `cargo test --workspace` — build + run all Rust tests, including the golden-vector
-  conformance suite (`reference/tests/vectors.rs`). Must pass before any commit.
+- `cargo test --workspace` — build + run all Rust tests: the golden-vector conformance
+  suite (`reference/tests/vectors.rs`) and the daemon behavior suite
+  (`daemon/tests/d*.rs`, IDs from `spec/daemon-test-plan.md`). Must pass before any
+  commit. The Layer-2 anvil tests (`daemon/tests/l2_anvil.rs`) self-skip unless anvil
+  and `contracts/out` artifacts exist — run `forge build` first to enable them.
+- `./scripts/check_daemon_opacity.sh` — D6: the daemon crate must never depend on an
+  app-layer workspace crate (CI-enforced).
 - `python3 scripts/gen_vectors.py` — regenerate `vectors/` (only after a deliberate
   normative-spec change; CI fails if committed vectors don't match the generator).
 - `cargo build -p blobsitter-reference --bin mmr_oracle && (cd contracts && forge test)` —
@@ -84,7 +89,13 @@ and bonded storage providers accountable via challenges and slashing.
   wrappers (standalone workspaces, committed lockfiles — determinism is what the vkeys
   hash); `script/` is host tooling (executor benches, vkey derivation). Proving is
   deferred to the network-spike milestone.
-- Planned: `daemon/`, `carrier/`, `publisher/` — see the off-chain phase plan below.
+- `daemon/` — the storage daemon (M1: chain follower at finality, blob source chain,
+  verify-before-write ingest, crash-safe flat-file chunk store). Consumes
+  `blobsitter-reference` for every protocol primitive; never parses record contents.
+- `testkit/` — the anvil integration harness (Layer 2): real contract artifacts, real
+  type-3 blob declarations, mock verifier via `anvil_setCode`, beacon-shaped blob
+  stub. Every later milestone's end-to-end tests build on it.
+- Planned: `carrier/`, `publisher/` — see the off-chain phase plan below.
 
 ## Off-chain phase plan (adopted 2026-08-06)
 
