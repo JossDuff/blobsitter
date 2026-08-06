@@ -66,7 +66,8 @@ and bonded storage providers accountable via challenges and slashing.
 
 ## Layout
 
-- `spec/` — design spec (WHY) + normative spec (WHAT).
+- `spec/` — design spec (WHY) + normative spec (WHAT) + the contract and daemon test
+  plans (named invariant/behavior IDs that test names must reference).
 - `vectors/` — golden test vectors (cross-component truth).
 - `scripts/gen_vectors.py` — vector generator (interim; Rust reference will take over).
 - `reference/` — Rust reference implementation of normative §1–10 + §11 EIP-712 digests;
@@ -83,7 +84,49 @@ and bonded storage providers accountable via challenges and slashing.
   wrappers (standalone workspaces, committed lockfiles — determinism is what the vkeys
   hash); `script/` is host tooling (executor benches, vkey derivation). Proving is
   deferred to the network-spike milestone.
-- Planned: `daemon/`, `carrier/`, `publisher/`.
+- Planned: `daemon/`, `carrier/`, `publisher/` — see the off-chain phase plan below.
+
+## Off-chain phase plan (adopted 2026-08-06)
+
+All protocol decisions are closed (wrap mode = PLONK, source data = raw opaque bytes);
+this phase builds the operational tooling. One milestone per PR, `/code-review` each,
+test plans updated in the same commit as any new mechanism. Milestones:
+
+- **M1 — daemon core:** chain follower, blob ingest behind a source trait, flat-file
+  chunk store (chunk i at offset 31·i), root verification against L1, crash/reorg
+  safety, plus the anvil integration harness (real contracts + real blob txs + mock
+  prover) that every later milestone reuses. Test plan: `spec/daemon-test-plan.md`
+  (behaviors D1–D6, D18, Layer 2).
+- **M2 — daemon enforcement duties:** challenge responder and custody-proof loop
+  (prover trait: network default, local opt-in, escape hatch as the prover-free
+  fallback). The slashing-critical milestone — D7–D17, Layers 3–4.
+- **M3 — carrier CLI:** intent intake, blob-tx assembly and submission,
+  reimbursement claims.
+- **M4 — publisher CLI:** EIP-712 intent signing, batch planning, appPointer and
+  successor flows. The publisher signs; it never holds ETH or submits.
+- **M5 — container format:** normative spec + golden vectors FIRST (extend
+  `gen_vectors.py`), then the library: framing, batch manifests, codec-ID +
+  dictionary hooks (v1 always stored/raw), tombstones, index snapshots.
+- **M6 — materializer + IPFS:** crash-isolated decoder, view materialization with
+  manifest-digest verification, per-blob pinning, appPointer publication.
+
+M1–M2 are the critical path. Standing rules for this phase: the daemon crate consumes
+`blobsitter-reference` for every protocol primitive (no reimplementations); the daemon
+never parses record contents (materializer only, M6); the daemon holds only the
+operator key; prover/network credentials live in the environment, never in code,
+config files, or test fixtures.
+
+**Blob sourcing (decided 2026-08-06;** research in
+`spec/research/blob-sourcing-2026-08.md`**):** the daemon is its own archive — it
+ingests every declared blob at head and persists it; the ~18-day network retention
+window is only the budget for repairing gaps. Source trait chain: configured beacon
+`/eth/v1/beacon/blobs` endpoints (primary + fallbacks, one adapter; post-Fusaka this
+endpoint replaces the deprecated `blob_sidecars` and takes a `versioned_hashes`
+filter) → Blobscan-style archive adapter. Bootstrap after the window: existing
+providers / IPFS pins AND public blob archives (few providers is the realistic case).
+All sources are untrusted — every blob verifies against its on-chain versioned hash
+before any byte is stored. Ops docs must say: a self-hosted beacon node needs
+semi-supernode config (post-PeerDAS, default nodes cannot serve full blobs).
 
 ## Working rules
 
