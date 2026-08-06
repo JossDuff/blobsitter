@@ -1,0 +1,30 @@
+[package]
+name = "blobsitter-daemon"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Storage daemon: follows L1, ingests declared blobs, maintains the canonical chunk store"
+
+[dependencies]
+blobsitter-reference = { path = "../reference" }
+# blob → KZG commitment for verify-before-write, with the EMBEDDED mainnet trusted
+# setup — no ceremony is ever run by or for this protocol (CLAUDE.md invariant 9).
+c-kzg = { version = "2", features = ["ethereum_kzg_settings"] }
+alloy = { version = "2", features = ["providers", "contract", "rpc-types", "sol-types"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+reqwest = { version = "0.12", features = ["json"] }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+hex = "0.4"
+tracing = "0.1"
+# flock on the data directory: one daemon per store (a second opener's crash
+# recovery would truncate the first one's in-flight append)
+rustix = { version = "1", features = ["fs"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+
+[dev-dependencies]
+blobsitter-testkit = { path = "../testkit" }
+tempfile = "3"

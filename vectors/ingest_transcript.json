@@ -1,0 +1,136 @@
+{
+  "_spec": "normative.md \u00a74\u2013\u00a76; daemon test plan D1",
+  "chunkPattern": "chunk(i)[b]=(31*i+b)%256",
+  "steps": [
+    {
+      "nonce": 0,
+      "priorLeafCount": 0,
+      "updateChunks": 1,
+      "blobCount": 1,
+      "newSubtreePeaks": [
+        "0x494fad95d8f97bf26572e69b4c6b584e9b25e5d556e46491a01b30d5f071229b"
+      ],
+      "newLeafCount": 1,
+      "resultPeaks": [
+        "0x494fad95d8f97bf26572e69b4c6b584e9b25e5d556e46491a01b30d5f071229b"
+      ],
+      "resultRoot": "0xcfa54a46ea5fa953959f4c30e9f1d5b7b36a69cb4802840b324ba5ea0ac3323d"
+    },
+    {
+      "nonce": 1,
+      "priorLeafCount": 1,
+      "updateChunks": 5,
+      "blobCount": 1,
+      "newSubtreePeaks": [
+        "0xb76aaac555d2226fe920e4338e8703c0570b477d96646d2d5b76b2b9a9e91ab7",
+        "0xde9128a841e1f28fbef3561e7db1a1f5207995c6a471560fa83f9689d783d05d",
+        "0x319aeda6b2c295fed3c8970e07be4508c1860b5e016eee01022c984ae3ef395e"
+      ],
+      "newLeafCount": 6,
+      "resultPeaks": [
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0",
+        "0x319aeda6b2c295fed3c8970e07be4508c1860b5e016eee01022c984ae3ef395e"
+      ],
+      "resultRoot": "0xd87b2e7110db46dfaac48827b4ca1248ef6aa336e0bc89720d574f329dbb7c62"
+    },
+    {
+      "nonce": 2,
+      "priorLeafCount": 6,
+      "updateChunks": 3,
+      "blobCount": 1,
+      "newSubtreePeaks": [
+        "0x62c598e3c3505bebadee27ec6d7f3c122eee94348a3ea5943eb50c01578cd3cd",
+        "0x66f0546c7e799eb9a3d23182b4d3072e9ee20c8933a131e2cfddee9176a0246e"
+      ],
+      "newLeafCount": 9,
+      "resultPeaks": [
+        "0x209cf4d9876b29f6259da08ae6f10553ed162dc172e4fbd7a2337e79a3886511",
+        "0x66f0546c7e799eb9a3d23182b4d3072e9ee20c8933a131e2cfddee9176a0246e"
+      ],
+      "resultRoot": "0x8e610e76150edc417597fa7c65787dd2675bd413e33f8c1cd4cdaa7da699aa27"
+    },
+    {
+      "nonce": 3,
+      "priorLeafCount": 9,
+      "updateChunks": 4090,
+      "blobCount": 1,
+      "newSubtreePeaks": [
+        "0x7776ead7b48aa3de89d5df251e47a2dcbd7cbea79530910b98d2b57d446d1669",
+        "0xaceefa3f761d72840ad832c725b9aee58de6531c082ed4ed8f6d63b9c2863d4d",
+        "0x734654fb5758f43383d8f8215f71a6bf6e402f24df986dfcb21baa86f3d7d621",
+        "0x5c94435e6c2c26bd9ec77a9533fc976e8f7c33376f0556d7ae497a232b1d4e5e",
+        "0xddb8513399271311df4275132853e9a157ba480b36702a0101d351f9db5d5e42",
+        "0x682d4e55579cf4bf8249cb6ac8f7d83e08813a646290c57ebc2ecd7f43e55913",
+        "0xf5aeca20580bd43f520ed18db0941f6864f0693d20e6e013726ef388880e8c37",
+        "0x8a0744c96aec80154e6da14770d5425f14bf47e924aff0e9da15edf92897ba93",
+        "0x9ed9218ffbf17fce5265471dc43e2db423f014a814256756612700eba01e2211",
+        "0xf4d37d01751a670c8c4f3fd498deb6011413e3cce8badfd3424db3f9284b8777",
+        "0x3cb2d059623cfb9af6ccd65ec6066ff190c595fcb40e05b11df5ae1f8b61d92b",
+        "0xd9e43c6ad840b40b166940ba8b21c9a4c4bbd1f340db487bdead9fd7d2dc82f9",
+        "0x10f9eaebc5077282dd843ecf522a9af8123e1191aefe266b7be7519646728c45"
+      ],
+      "newLeafCount": 4099,
+      "resultPeaks": [
+        "0xeb9a42eda3e23e4121380a12e917b9bccb1533a4fb2cf7ca45fecb9be963d36d",
+        "0xd9e43c6ad840b40b166940ba8b21c9a4c4bbd1f340db487bdead9fd7d2dc82f9",
+        "0x10f9eaebc5077282dd843ecf522a9af8123e1191aefe266b7be7519646728c45"
+      ],
+      "resultRoot": "0xc06650c9b4c5126e067e6cba7873c84aacfd6006de4eca7f36c7303568b02696"
+    },
+    {
+      "nonce": 4,
+      "priorLeafCount": 4099,
+      "updateChunks": 4096,
+      "blobCount": 1,
+      "newSubtreePeaks": [
+        "0x12fef3611741e31ca1215a5f6cea801321cc37095537db1d1b81d60717a6e015",
+        "0xcbf0ce86193fe4094d0854d550a89ca3e0e68929757e349ce4406da41f279880",
+        "0x50b3671e8741fd76d10538b00a0a2aed151ffb99815b093313de733cbd3fbd6a",
+        "0x5c94435e6c2c26bd9ec77a9533fc976e8f7c33376f0556d7ae497a232b1d4e5e",
+        "0xddb8513399271311df4275132853e9a157ba480b36702a0101d351f9db5d5e42",
+        "0x682d4e55579cf4bf8249cb6ac8f7d83e08813a646290c57ebc2ecd7f43e55913",
+        "0xf5aeca20580bd43f520ed18db0941f6864f0693d20e6e013726ef388880e8c37",
+        "0x8a0744c96aec80154e6da14770d5425f14bf47e924aff0e9da15edf92897ba93",
+        "0x9ed9218ffbf17fce5265471dc43e2db423f014a814256756612700eba01e2211",
+        "0xf4d37d01751a670c8c4f3fd498deb6011413e3cce8badfd3424db3f9284b8777",
+        "0x3cb2d059623cfb9af6ccd65ec6066ff190c595fcb40e05b11df5ae1f8b61d92b",
+        "0xd9e43c6ad840b40b166940ba8b21c9a4c4bbd1f340db487bdead9fd7d2dc82f9",
+        "0x10f9eaebc5077282dd843ecf522a9af8123e1191aefe266b7be7519646728c45"
+      ],
+      "newLeafCount": 8195,
+      "resultPeaks": [
+        "0xe432cee1c4ccda019d666c1722f6b3ddd2c25fdfe7d3897211cead34c6df079c",
+        "0xd9e43c6ad840b40b166940ba8b21c9a4c4bbd1f340db487bdead9fd7d2dc82f9",
+        "0x10f9eaebc5077282dd843ecf522a9af8123e1191aefe266b7be7519646728c45"
+      ],
+      "resultRoot": "0x8ad487ed708e1a36c18bddab27adde7a7290f3ece7f461e25665f73cbc735c6d"
+    },
+    {
+      "nonce": 5,
+      "priorLeafCount": 8195,
+      "updateChunks": 4097,
+      "blobCount": 2,
+      "newSubtreePeaks": [
+        "0x12fef3611741e31ca1215a5f6cea801321cc37095537db1d1b81d60717a6e015",
+        "0xcbf0ce86193fe4094d0854d550a89ca3e0e68929757e349ce4406da41f279880",
+        "0x50b3671e8741fd76d10538b00a0a2aed151ffb99815b093313de733cbd3fbd6a",
+        "0x5c94435e6c2c26bd9ec77a9533fc976e8f7c33376f0556d7ae497a232b1d4e5e",
+        "0xddb8513399271311df4275132853e9a157ba480b36702a0101d351f9db5d5e42",
+        "0x682d4e55579cf4bf8249cb6ac8f7d83e08813a646290c57ebc2ecd7f43e55913",
+        "0xf5aeca20580bd43f520ed18db0941f6864f0693d20e6e013726ef388880e8c37",
+        "0x8a0744c96aec80154e6da14770d5425f14bf47e924aff0e9da15edf92897ba93",
+        "0x9ed9218ffbf17fce5265471dc43e2db423f014a814256756612700eba01e2211",
+        "0xf4d37d01751a670c8c4f3fd498deb6011413e3cce8badfd3424db3f9284b8777",
+        "0x3cb2d059623cfb9af6ccd65ec6066ff190c595fcb40e05b11df5ae1f8b61d92b",
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0"
+      ],
+      "newLeafCount": 12292,
+      "resultPeaks": [
+        "0xe432cee1c4ccda019d666c1722f6b3ddd2c25fdfe7d3897211cead34c6df079c",
+        "0xeb9a42eda3e23e4121380a12e917b9bccb1533a4fb2cf7ca45fecb9be963d36d",
+        "0x9867d7d0a16aebc9c0f8cdfaa3c927f77e510bdbc5e983415257a8b26dc6f2f0"
+      ],
+      "resultRoot": "0xf8a5d3c26430a90a04c3e3310b703fd914cd367d415decda2c50e6a9867d6175"
+    }
+  ]
+}

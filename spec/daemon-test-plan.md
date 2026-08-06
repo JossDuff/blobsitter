@@ -109,16 +109,33 @@ construction (the off-chain §7.3 form AND the on-chain §7.2 form it must produ
   applies identically to all of them. Tests drive primary failure, full near-head
   chain exhaustion (alarm, D3), and a bootstrap fill from an archive-only source set.
 
+### Following and liveness
+
+- **D19 — follower liveness:** a run of consecutive failed follower ticks (dead RPC,
+  revoked credentials, undecodable logs) escalates to a Critical alarm and re-alarms
+  while the condition lasts; one healthy tick resets the count. A detected event gap
+  (a nonce observed whose predecessor was never seen — e.g. a provider dropped a log
+  from a getLogs page) rewinds the scan cursor to the deployment block, since the
+  missing log is behind the committed cursor; the rescan is absorbed by D3's
+  redelivery idempotence. The store-vs-L1 root check is skipped while the RPC's
+  finalized tag is behind already-committed state — a lagging or freshly rotated node
+  must not fire the disagreement alarm against a healthy store.
+
 ## Layer 2 — anvil integration harness
 
-The end-to-end rig every later milestone builds on: anvil with the REAL contracts
-deployed (same artifacts the forge suite tests), real type-3 blob-carrying
+The end-to-end rig every later milestone builds on (`testkit/`): anvil with the REAL
+contracts deployed (same artifacts the forge suite tests), real type-3 blob-carrying
 declarations driven by the test harness, the daemon running as a real process against
-it, and the mock prover. Blob contents reach the daemon through a test implementation
-of the source trait (anvil has no beacon API). Core scenarios: declare → ingest →
-verify root; challenge → respond → bond paid; custody commit → escape-hatch proof;
-the lapse race (cure lands first). The instance's window parameters are constructor
-arguments, so the harness deploys with compressed windows and real time.
+it, and the mock verifier planted at the pinned address (`anvil_setCode`, the node
+equivalent of `vm.etch`). Blob contents reach the daemon through a beacon-SHAPED stub
+server (anvil has no beacon API): the harness serves `/eth/v1/beacon/blobs/{block_id}`
+and the daemon's PRODUCTION beacon adapter is what the tests exercise — which also
+demonstrates D18's claim that a self-hosted archiver behind the same API shape slots
+in unchanged. Core scenarios: declare → ingest → verify root; challenge → respond →
+bond paid; custody commit → escape-hatch proof; the lapse race (cure lands first).
+The instance's window parameters are constructor arguments, so the harness deploys
+with compressed windows and real time (anvil `--slots-in-an-epoch 1` gives
+finalized = latest − 2, tight enough to test finality gating in real time).
 
 ## Layer 3 — fault injection
 
