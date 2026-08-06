@@ -211,6 +211,77 @@ pub fn verify(chunk: &Chunk, i: u64, path: &[Hash], n: u64, peaks: &[Hash]) -> b
     acc == peaks[k]
 }
 
+/// Inclusion-proof CONSTRUCTION from an arbitrary chunk source — the storage side of
+/// the protocol: challenge responses, custody witnesses, and historical peak
+/// reconstruction all reduce to hashing perfect subtrees over stored chunks. One
+/// builder per batch: subtree roots at or above [`MEMO_MIN_HEIGHT`] are memoized, so
+/// a batch of paths through one covering peak shares the interior work (one full
+/// hash pass over the data) instead of re-hashing the peak per path, while the memo
+/// stays a ~1/2^10 fraction of the dataset instead of a copy of its whole node set.
+pub struct PathBuilder<F: FnMut(u64) -> Chunk> {
+    chunk_at: F,
+    memo: std::collections::HashMap<(u64, u32), Hash>,
+}
+
+/// Subtrees at least this tall get memoized; shorter ones are cheaper to recompute
+/// (≤ 2^10 chunk reads) than to keep.
+pub const MEMO_MIN_HEIGHT: u32 = 10;
+
+impl<F: FnMut(u64) -> Chunk> PathBuilder<F> {
+    pub fn new(chunk_at: F) -> Self {
+        Self { chunk_at, memo: std::collections::HashMap::new() }
+    }
+
+    /// Root of the perfect subtree of height `h` over leaves `[start, start + 2^h)`.
+    pub fn subtree_root(&mut self, start: u64, h: u32) -> Hash {
+        if h == 0 {
+            return leaf(&(self.chunk_at)(start));
+        }
+        if h >= MEMO_MIN_HEIGHT {
+            if let Some(cached) = self.memo.get(&(start, h)) {
+                return *cached;
+            }
+        }
+        let half = 1u64 << (h - 1);
+        let left = self.subtree_root(start, h - 1);
+        let right = self.subtree_root(start + half, h - 1);
+        let out = node(&left, &right);
+        if h >= MEMO_MIN_HEIGHT {
+            self.memo.insert((start, h), out);
+        }
+        out
+    }
+
+    /// The canonical peak list at ANY leaf count `n` covered by the chunk source —
+    /// how a daemon reconstructs a historical pin (a challenge against an unbonding
+    /// provider's exit snapshot, a custody commit taken mid-growth) from the flat
+    /// file alone.
+    pub fn peaks_at(&mut self, n: u64) -> Vec<Hash> {
+        let mut peaks = Vec::new();
+        let mut start = 0u64;
+        for h in peak_heights(n) {
+            peaks.push(self.subtree_root(start, h));
+            start += 1u64 << h;
+        }
+        peaks
+    }
+
+    /// Inclusion proof for leaf `i` at leaf count `n`: the covering peak's index plus
+    /// the sibling hashes from the leaf up, bottom level first — exactly the path
+    /// [`verify`] (and the contract) consumes.
+    pub fn prove(&mut self, i: u64, n: u64) -> (usize, Vec<Hash>) {
+        let (k, start, h) = locate(i, n);
+        let off = i - start;
+        let mut path = Vec::with_capacity(h as usize);
+        for lvl in 0..h {
+            let width = 1u64 << lvl;
+            let sib_off = (off >> lvl) ^ 1;
+            path.push(self.subtree_root(start + sib_off * width, lvl));
+        }
+        (k, path)
+    }
+}
+
 /// Fiat–Shamir preimage for the blob evaluation point: `0x03 ‖ instance ‖ vh… ‖
 /// priorPeaks… ‖ newSubtreePeaks… ‖ u64be(n0) ‖ u64be(n1)`. Binding the instance
 /// address and the full state transition makes `z` specific to this exact declaration.
@@ -588,17 +659,9 @@ pub mod testvec {
         mmr
     }
 
-    /// Produce an inclusion proof for test leaf `i` at leaf count `n`: the covering
-    /// peak's index plus the sibling hashes from the leaf up, bottom level first.
+    /// Produce an inclusion proof for test leaf `i` at leaf count `n` — the general
+    /// [`PathBuilder`] over the test pattern.
     pub fn prove(i: u64, n: u64) -> (usize, Vec<Hash>) {
-        let (k, start, h) = locate(i, n);
-        let off = i - start;
-        let mut path = Vec::with_capacity(h as usize);
-        for lvl in 0..h {
-            let width = 1u64 << lvl;
-            let sib_off = (off >> lvl) ^ 1;
-            path.push(subtree_root(start + sib_off * width, lvl));
-        }
-        (k, path)
+        PathBuilder::new(chunk).prove(i, n)
     }
 }
