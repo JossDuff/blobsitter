@@ -37,6 +37,65 @@ pub struct Config {
     pub log_page_blocks: u64,
     pub beacon: BeaconConfig,
     pub blobscan: Option<BlobscanConfig>,
+    /// Present = this daemon serves a bonded provider (enforcement duties on).
+    /// Absent = archive-only mode: follow and ingest, no keys, no transactions.
+    pub provider: Option<ProviderConfig>,
+}
+
+/// Enforcement configuration. Deliberately absent: any private key (the operator key
+/// comes ONLY from the environment, see [`ProviderConfig::operator_key`]) and the
+/// withdrawal address (the daemon has no business knowing it — `stake` and `withdraw`
+/// are cold-key operations outside the daemon's scope).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderConfig {
+    /// The providerId this daemon answers for.
+    pub id: u64,
+    /// When the custody period's remaining time drops below this, the loop abandons
+    /// the prover and takes the escape hatch (chunk reveals, SNARK-free).
+    #[serde(default = "default_escape_threshold_secs")]
+    pub escape_threshold_secs: u64,
+    /// How long one submission attempt waits for confirmation before a fee bump.
+    #[serde(default = "default_confirm_timeout_secs")]
+    pub confirm_timeout_secs: u64,
+    /// The pinned custody guest ELF, needed only when the daemon is built with the
+    /// `sp1` feature and expected to produce succinct proofs; without it the loop
+    /// proves every period through the escape hatch.
+    pub custody_elf: Option<PathBuf>,
+    /// Hard ceiling on how long one proving attempt may run before it counts as a
+    /// failure (and triggers the escape fallback).
+    #[serde(default = "default_proving_timeout_secs")]
+    pub proving_timeout_secs: u64,
+}
+
+/// The environment variable holding the operator's hot key (0x-prefixed hex).
+pub const OPERATOR_KEY_ENV: &str = "BLOBSITTER_OPERATOR_KEY";
+
+impl ProviderConfig {
+    /// Load the operator key from the environment — never from the config file, and
+    /// the returned signer is never logged. A compromised config must not be a
+    /// compromised key.
+    pub fn operator_key(&self) -> Result<alloy::signers::local::PrivateKeySigner, ConfigError> {
+        let raw = std::env::var(OPERATOR_KEY_ENV)
+            .map_err(|_| ConfigError::MissingEnv(OPERATOR_KEY_ENV.to_string()))?;
+        raw.trim()
+            .parse()
+            .map_err(|_| ConfigError::Invalid(format!("{OPERATOR_KEY_ENV} is not a valid key")))
+    }
+}
+
+fn default_escape_threshold_secs() -> u64 {
+    // A quarter of the production 30-day period: generous margin for the escape
+    // transaction after even a badly stuck proving pipeline.
+    7 * 24 * 3600
+}
+
+fn default_confirm_timeout_secs() -> u64 {
+    90
+}
+
+fn default_proving_timeout_secs() -> u64 {
+    6 * 3600
 }
 
 #[derive(Deserialize)]

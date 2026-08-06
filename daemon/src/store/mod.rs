@@ -152,4 +152,40 @@ impl Store {
         }
         self.chunks.read(index)
     }
+
+    /// A detached read-only view at the CURRENT committed frontier, safe to move into
+    /// background tasks (proof jobs, the custody prover): its own file handle, its own
+    /// bound. The store only ever appends past — never mutates under — a frontier, so
+    /// a snapshot reader stays coherent for its lifetime.
+    pub fn reader(&self) -> Result<Reader, StoreError> {
+        let (file, path) = self.chunks.try_clone_handle()?;
+        Ok(Reader { file: std::sync::Arc::new(file), path, leaf_count: self.frontier.leaf_count })
+    }
+}
+
+/// See [`Store::reader`]. Cheap to clone; reads are positioned (no shared cursor).
+#[derive(Clone)]
+pub struct Reader {
+    file: std::sync::Arc<std::fs::File>,
+    path: PathBuf,
+    leaf_count: u64,
+}
+
+impl Reader {
+    /// The committed frontier this reader is bounded by.
+    pub fn leaf_count(&self) -> u64 {
+        self.leaf_count
+    }
+
+    pub fn chunk(&self, index: u64) -> Result<Chunk, StoreError> {
+        use std::os::unix::fs::FileExt;
+        if index >= self.leaf_count {
+            return Err(StoreError::OutOfBounds { index, leaf_count: self.leaf_count });
+        }
+        let mut chunk = [0u8; 31];
+        self.file
+            .read_exact_at(&mut chunk, index * 31)
+            .map_err(|e| StoreError::Io { path: self.path.clone(), source: e })?;
+        Ok(chunk)
+    }
 }
