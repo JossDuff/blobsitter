@@ -57,14 +57,23 @@ jobs:
           workspaces: circuits
       - run: cargo test --manifest-path circuits/Cargo.toml
 
-  # The reference implementation must agree with the committed vectors.
+  # The reference implementation must agree with the committed vectors, and the
+  # daemon suite (Layers 1–2) must pass. Foundry is installed and the contracts
+  # built so the Layer-2 anvil tests run for real instead of self-skipping.
   rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: forge build
+        working-directory: contracts
       - run: cargo test --workspace
+      # D6 — the daemon must never grow an app-layer dependency.
+      - run: ./scripts/check_daemon_opacity.sh
       # The committed KZG fixture must be exactly what the generator produces.
       - run: cargo run -p kzg-fixture
       - run: git diff --exit-code contracts/test/fixtures/
