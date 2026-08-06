@@ -32,12 +32,13 @@ and bonded storage providers accountable via challenges and slashing.
 7. **Chunk = 31 bytes = one blob field element.** Fixed, not configurable.
 8. **The stake can only ever be paid to the provider's withdrawal address.**
 9. **No trusted-setup ceremony is ever run by or for this protocol.** SP1's pre-existing
-   setups only (PLONK/Ignition default).
+   setups only (PLONK/Ignition wrap, decided 2026-08-06).
 
 ## Stack (decided 2026-07-29)
 
 - Contracts: Solidity + Foundry.
-- Circuits: SP1 zkVM — pin the exact version at contract freeze; PLONK wrap default.
+- Circuits: SP1 zkVM — pin the exact version at contract freeze; PLONK wrap (decided
+  2026-08-06 for Ignition-ceremony provenance; the instance pins the PLONK gateway).
 - Off-chain (daemon, carrier, publisher tooling, reference implementation): Rust.
 
 ## Commands
@@ -72,8 +73,9 @@ and bonded storage providers accountable via challenges and slashing.
   `src/bin/mmr_oracle.rs` is the forge suite's ffi differential oracle.
 - `contracts/` — Foundry project: the COMPLETE contract surface (publication, provider
   lifecycle, challenges, custody proofs, paymaster) + mocks, tests, and generated
-  fixtures (`test/fixtures/`, never hand-edited). Remaining before freeze: swap the
-  mock SP1 verifier for the real one once the circuit spec is written.
+  fixtures (`test/fixtures/`, never hand-edited). The unit/invariant suites etch an
+  interface-exact mock at the pinned verifier address; the RealProof fork suite runs
+  the real deployed verifier with real network proofs.
 - `tools/kzg-fixture/` — generates the real-KZG test fixture from c-kzg's embedded
   Ethereum setup (no ceremony is ever run by or for this protocol).
 - `circuits/` — the SP1 circuits: `common/` holds ALL guest logic as a host-buildable
@@ -100,6 +102,7 @@ and bonded storage providers accountable via challenges and slashing.
 - Calibrate and freeze `TAIL` (spec §15.2; the gas-snapshot test in
   `Reimbursement.t.sol` measured ~25.3k against the provisional 25_000 — nearly exact)
   and `REIMBURSE_GAS_CAP` (provisional 200_000) in `BlobsitterInstance`.
-- Pin the real SP1 verifier address + both program vkeys (placeholders today).
+- Re-verify the pinned PLONK gateway address at the freeze block (wrap mode is decided;
+  the address and SP1 release are provisional until freeze) and freeze the final vkeys.
 - Re-measure `RESPONSE_GAS_PER_CHUNK`/`RESPONSE_BASE_GAS` against the final respond().
 - Decide a `forge coverage` gate threshold; consider mutation testing before audit.

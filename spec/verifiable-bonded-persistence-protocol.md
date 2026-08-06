@@ -281,10 +281,15 @@ contributions; Succinct 2024, 18 participants) are acceptable fallbacks where be
 justify them, at a step down in participant count and public reuse. Every candidate is a
 one-honest-participant assumption, milder in kind than the EIP-4844 KZG-ceremony assumption
 (~141k participants) already embedded in the point-evaluation precompile this protocol
-depends on. **Selected (2026-07-29): SP1**, version pinned at contract freeze, with the
-PLONK/Ignition wrap as default per the universal-setup preference (Groth16/Succinct-ceremony
-as fallback should the feasibility spike reveal a compelling advantage). RISC Zero and OpenVM
-remain documented fallbacks if SP1 fails the spike.
+depends on. **Selected (2026-07-29): SP1**, version pinned at contract freeze. **Wrap mode
+decided (2026-08-06): PLONK over the Ignition SRS.** The proving spike measured the price of
+that preference precisely — Groth16 verifies ~63k gas cheaper, its proofs are ~2.7× smaller
+(356 vs 964 bytes), and its wraps complete 3–4× faster — and the decision accepts those costs
+in exchange for provenance: one universal, widely reused, 176-participant public ceremony
+rather than Succinct's own 18-participant circuit-specific one. Verification cost is
+per-proof and small at this protocol's update rate, while the setup assumption is permanent.
+SP1 deploys separate verifier gateways per wrap mode; the instance pins the PLONK gateway
+and the pinned address is re-verified at contract freeze.
 
 ### Genesis: published through blobs, proven like everything else
 
@@ -312,10 +317,11 @@ remain documented fallbacks if SP1 fails the spike.
   it would only raise the compromised-signer ceiling. The deploying community direct-funds
   the carrier(s) running the campaign. The publisher property is untouched: the multisig
   still only signs; carriers still submit.
-- **Decide compression first.** The campaign is the single largest publication the dataset
-  will ever make, and committed bytes can never be recompressed — a ratio-R codec divides
-  blob count, declaration count, and execution gas by ≈R. See
-  [Compression](#compression-deferred).
+- **Compression decided (2026-08-06): the campaign publishes raw bytes.** The campaign is
+  the single largest publication the dataset will ever make, and committed bytes can never
+  be recompressed — a ratio-R codec divides blob count, declaration count, and execution gas
+  by ≈R. That sunk cost is accepted: v1 imposes no restriction or transform on the source
+  data. See [Compression](#compression-deferred).
 - **Batch semantics apply:** the campaign is one logical batch — `appPointer` is set on its
   final declaration, and the stream is interpretable only from that point.
 - What no proof can establish is that the published bytes are the *socially right* data. That
@@ -665,6 +671,14 @@ dictionary record type), because compression is a per-batch property and raw and
 batches can then coexist in one append-only stream forever. With the hooks, enabling
 compression later is a new codec ID in new batches; without them it is a container migration
 that can never be applied retroactively.
+
+> **Decision (2026-08-06): v1 — including the genesis campaign — publishes source data as
+> raw, opaque bytes.** No restriction, canonicalization, or transform is imposed on the
+> source format; the app layer accepts any data as-is. This closes the "compression must
+> land before the genesis campaign" question: the campaign publishes raw, and the ratio-R
+> savings on already-committed bytes are knowingly forgone. A research spike measuring
+> achievable ratios (and hence savings) across representative source data remains worthwhile
+> before any later batch enables a codec via the reserved hooks.
 
 The economics, stated generically: every publication cost scales with committed bytes, so a
 compression ratio R divides blob fees, declaration count, and the dominant per-declaration
