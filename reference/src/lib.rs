@@ -335,6 +335,9 @@ pub mod blob {
         BigUint::parse_bytes(super::R_BLS_HEX.as_bytes(), 16).expect("valid modulus")
     }
 
+    /// One blob's raw byte length: 4096 field elements of 32 bytes.
+    pub const BLOB_BYTES: usize = FIELD_ELEMENTS_PER_BLOB * 32;
+
     /// The canonical blob for local chunks of an update (single blob): byte 0 zero,
     /// bytes 1..31 the chunk, zero elements beyond the data.
     pub fn elements_from_chunks(chunks: &[Chunk]) -> Vec<[u8; 32]> {
@@ -344,6 +347,35 @@ pub mod blob {
             out[i][1..].copy_from_slice(c);
         }
         out
+    }
+
+    /// Pack an update's chunks into canonical raw blobs: local chunk `u` becomes
+    /// field element `u mod 4096` of blob `⌊u/4096⌋` with a zero high byte, packed
+    /// from element 0 of the first blob with no gaps, trailing elements zero. The
+    /// single normative packing every producer (publisher, test harness) and
+    /// consumer (daemon, equivalence circuit) must agree on.
+    pub fn pack(chunks: &[Chunk]) -> Vec<Vec<u8>> {
+        chunks
+            .chunks(FIELD_ELEMENTS_PER_BLOB)
+            .map(|slice| {
+                let elements = elements_from_chunks(slice);
+                let mut raw = vec![0u8; BLOB_BYTES];
+                for (e, element) in elements.iter().enumerate() {
+                    raw[e * 32..(e + 1) * 32].copy_from_slice(element);
+                }
+                raw
+            })
+            .collect()
+    }
+
+    /// The EIP-4844 versioned hash of a KZG commitment: `0x01 ‖ sha256(commitment)[1:]`.
+    /// Computing the commitment itself needs a KZG backend (c-kzg) and stays with the
+    /// caller; the hash rule lives here so it exists exactly once.
+    pub fn versioned_hash(commitment: &[u8; 48]) -> super::Hash {
+        use sha2::{Digest, Sha256};
+        let mut vh: super::Hash = Sha256::digest(commitment).into();
+        vh[0] = 0x01;
+        vh
     }
 
     /// The bit-reversed evaluation domain: 7 generates Fr*, so 7^((r−1)/4096) generates
