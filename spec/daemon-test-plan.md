@@ -120,6 +120,12 @@ construction (the off-chain §7.3 form AND the on-chain §7.2 form it must produ
   redelivery idempotence. The store-vs-L1 root check is skipped while the RPC's
   finalized tag is behind already-committed state — a lagging or freshly rotated node
   must not fire the disagreement alarm against a healthy store.
+- **D20 — alarm hygiene and failure backoff:** retry loops re-raise their condition
+  every attempt (they must never give up), but identical alarm messages inside a
+  suppression window page exactly once; messages carrying changing detail (attempt
+  counts, new ids) always pass. Consecutive follower failures double the poll
+  interval, capped at 32× (a day-long outage retries dozens of times, not
+  thousands), snapping back to normal cadence on the first healthy tick.
 
 ## Layer 2 — anvil integration harness
 
