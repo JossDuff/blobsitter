@@ -4,7 +4,7 @@
 
 use blobsitter_reference::{
     custody_index, decompose, eip712, fs_z, fs_z_preimage, keccak256, leaf, peak_heights, root,
-    testvec, verify, Chunk, Hash,
+    testvec, verify, Chunk, Hash, Mmr,
 };
 use serde_json::Value;
 
@@ -87,6 +87,14 @@ fn mmr_roots_vectors() {
         assert_eq!(mmr.root(), hash(&case["root"]), "root, n={n}");
         // root() as a free function must agree with the state form
         assert_eq!(root(n, &mmr.peaks()), hash(&case["root"]));
+        // rehydrating from (leafCount, peaks) — what a daemon does at startup —
+        // must reproduce the identical verifier state
+        let rehydrated = Mmr::from_state(n, &mmr.peaks()).unwrap();
+        assert_eq!(rehydrated.peaks(), mmr.peaks(), "from_state peaks, n={n}");
+        assert_eq!(rehydrated.root(), mmr.root(), "from_state root, n={n}");
+        if n > 0 {
+            assert!(Mmr::from_state(n, &mmr.peaks()[1..]).is_err(), "wrong peak count");
+        }
     }
 }
 

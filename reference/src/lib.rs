@@ -116,6 +116,23 @@ impl Mmr {
         Self::default()
     }
 
+    /// Rehydrate a verifier's state from `(leafCount, peaks)` in canonical order —
+    /// exactly what the contract stores and what a daemon persists across restarts.
+    /// The peak list length must match the set bits of `n`; the hashes themselves are
+    /// taken on trust (they came from this struct, or from L1, and every use re-checks
+    /// against an on-chain root).
+    pub fn from_state(leaf_count: u64, peaks: &[Hash]) -> Result<Self, &'static str> {
+        let heights = peak_heights(leaf_count);
+        if peaks.len() != heights.len() {
+            return Err("peak count does not match popcount of leaf count");
+        }
+        let mut by_height = std::collections::BTreeMap::new();
+        for (&h, &p) in heights.iter().zip(peaks) {
+            by_height.insert(h, p);
+        }
+        Ok(Self { peaks: by_height, leaf_count })
+    }
+
     pub fn leaf_count(&self) -> u64 {
         self.leaf_count
     }
