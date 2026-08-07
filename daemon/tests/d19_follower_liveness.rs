@@ -30,6 +30,7 @@ async fn d19_consecutive_tick_failures_escalate_to_critical() {
     let mut follower = Follower::new(
         provider,
         ingestor,
+        None,
         alarm.clone(),
         FollowerConfig {
             instance: alloy::primitives::Address::ZERO,

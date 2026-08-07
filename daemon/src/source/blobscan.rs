@@ -34,25 +34,39 @@ impl BlobSource for BlobscanSource {
         _ctx: &BlobContext,
         wanted: &[Hash],
     ) -> Result<Vec<RawBlob>, SourceError> {
-        let mut blobs = Vec::with_capacity(wanted.len());
-        let mut errors = Vec::new();
-        for vh in wanted {
+        use futures::StreamExt;
+
+        // Bounded-concurrency fan-out: a bootstrap fill is thousands of per-blob
+        // lookups, and paying one RTT each in series would turn hours of pure
+        // latency into the dominant cost. Eight in flight keeps a public API polite.
+        let lookups = wanted.iter().copied().map(|vh| {
             let url = format!(
                 "{}/blobs/0x{}/data",
                 self.base.trim_end_matches('/'),
                 hex::encode(vh)
             );
-            let result = async {
-                let resp = self.client.get(&url).send().await.map_err(|e| e.to_string())?;
-                if !resp.status().is_success() {
-                    return Err(format!("{}", resp.status()));
+            let client = self.client.clone();
+            async move {
+                let result: Result<RawBlob, String> = async {
+                    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+                    if !resp.status().is_success() {
+                        return Err(format!("{}", resp.status()));
+                    }
+                    // The body is a JSON string literal holding 0x-prefixed hex.
+                    let hex_string: String =
+                        resp.json().await.map_err(|e| format!("bad response body: {e}"))?;
+                    parse_blob_hex(&hex_string)
                 }
-                // The body is a JSON string literal holding 0x-prefixed hex.
-                let hex_string: String =
-                    resp.json().await.map_err(|e| format!("bad response body: {e}"))?;
-                parse_blob_hex(&hex_string)
+                .await;
+                (vh, result)
             }
-            .await;
+        });
+        let results: Vec<(Hash, Result<RawBlob, String>)> =
+            futures::stream::iter(lookups).buffer_unordered(8).collect().await;
+
+        let mut blobs = Vec::with_capacity(wanted.len());
+        let mut errors = Vec::new();
+        for (vh, result) in results {
             match result {
                 Ok(blob) => blobs.push(blob),
                 // Keep going: partial results are useful (the chain fills the rest).

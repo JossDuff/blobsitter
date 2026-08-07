@@ -83,11 +83,18 @@ pub struct Harness {
 }
 
 impl Harness {
+    /// Spawn anvil + deploy the rig with default (mildly compressed) windows.
+    pub async fn spawn() -> Result<Self, HarnessError> {
+        Self::spawn_with(|_| {}).await
+    }
+
     /// Spawn anvil + deploy the rig. Hardfork pinned to prague: the harness submits
     /// classic EIP-4844 blob sidecars, not the post-Fusaka cell-proof variant.
     /// `--slots-in-an-epoch 1` gives the tightest finality anvil offers
     /// (finalized = latest − 2), so finality-gated behavior is testable in real time.
-    pub async fn spawn() -> Result<Self, HarnessError> {
+    /// `tune` edits the instance's constructor parameters before deployment —
+    /// enforcement tests compress the protocol windows to seconds.
+    pub async fn spawn_with(tune: impl FnOnce(&mut Instance::Params)) -> Result<Self, HarnessError> {
         let mut anvil = Anvil::new().args(["--slots-in-an-epoch", "1", "--hardfork", "prague"]);
         if let Some(bin) = dirs_foundry_anvil() {
             anvil = anvil.path(bin);
@@ -125,7 +132,7 @@ impl Harness {
         .await?
         .0;
 
-        let params = Instance::Params {
+        let mut params = Instance::Params {
             publisher: publisher_wallet,
             stakeWei: U256::from(2u64) * U256::from(10u64).pow(U256::from(18)),
             responseWindow: 60,
@@ -142,6 +149,7 @@ impl Harness {
             dormancyWindow: 86_400,
             dormancyMinChunks: 32_768,
         };
+        tune(&mut params);
         let (instance, instance_deploy_block) = deploy(
             &provider,
             artifact_bytecode("BlobsitterInstance", "bytecode")?,
@@ -166,6 +174,11 @@ impl Harness {
         Instance::new(self.instance, self.provider.clone())
     }
 
+    /// One of anvil's pre-funded dev keys (0 and 1 are taken: carrier and publisher).
+    pub fn dev_key(&self, index: usize) -> PrivateKeySigner {
+        self._anvil.keys()[index].clone().into()
+    }
+
     /// Mine `n` empty blocks (advances finality: finalized = latest − 2).
     pub async fn mine(&self, n: u64) -> Result<(), HarnessError> {
         self.provider
@@ -183,6 +196,115 @@ impl Harness {
             .ok_or_else(|| HarnessError::Rpc(format!("block {number} missing")))?
             .header
             .timestamp)
+    }
+
+    /// Warp chain time forward and mine, so time-window transitions (custody
+    /// periods, response deadlines, unbonding delays) run in test time.
+    pub async fn warp(&self, seconds: u64) -> Result<(), HarnessError> {
+        self.provider
+            .raw_request::<_, serde_json::Value>("evm_increaseTime".into(), (U256::from(seconds),))
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?;
+        self.mine(1).await
+    }
+
+    /// Give an address gas money (the operator hot wallet in daemon tests).
+    pub async fn fund(&self, address: Address, wei: U256) -> Result<(), HarnessError> {
+        self.provider
+            .raw_request::<_, ()>("anvil_setBalance".into(), (address, wei))
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))
+    }
+
+    /// Toggle automine — off lets response transactions sit pending, driving the
+    /// fee-escalation paths.
+    pub async fn set_automine(&self, on: bool) -> Result<(), HarnessError> {
+        self.provider
+            .raw_request::<_, ()>("evm_setAutomine".into(), (on,))
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))
+    }
+
+    /// Stake a new provider (2 ETH from the harness's funded key) and return its id.
+    pub async fn stake(&self, operator: Address, withdrawal: Address) -> Result<u64, HarnessError> {
+        let contract = self.instance_contract();
+        let stake_wei = U256::from(2u64) * U256::from(10u64).pow(U256::from(18));
+        let id = contract
+            .stake(operator, withdrawal)
+            .value(stake_wei)
+            .call()
+            .await
+            .map_err(|e| HarnessError::Rpc(format!("stake preview: {e}")))?;
+        let receipt = contract
+            .stake(operator, withdrawal)
+            .value(stake_wei)
+            .send()
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?
+            .get_receipt()
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?;
+        if !receipt.status() {
+            return Err(HarnessError::Rpc("stake reverted".into()));
+        }
+        Ok(id)
+    }
+
+    /// Open a challenge against `provider_id` from the harness's funded key, with a
+    /// comfortably sufficient bond at the current basefee. Returns the challengeId.
+    pub async fn open_challenge(
+        &self,
+        provider_id: u64,
+        indices: Vec<u64>,
+    ) -> Result<u64, HarnessError> {
+        // bond ≥ 3 · (k · RESPONSE_GAS_PER_CHUNK + RESPONSE_BASE_GAS) · basefee;
+        // pay double at the latest basefee so a fee drift never underfunds it.
+        let basefee = self
+            .provider
+            .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?
+            .and_then(|b| b.header.base_fee_per_gas)
+            .unwrap_or(1_000_000_000) as u128;
+        let bond = 2u128 * 3 * (indices.len() as u128 * 38_680 + 21_000) * basefee;
+
+        let contract = self.instance_contract();
+        let id = contract
+            .challenge(provider_id, indices.clone())
+            .value(U256::from(bond))
+            .call()
+            .await
+            .map_err(|e| HarnessError::Rpc(format!("challenge preview: {e}")))?;
+        let receipt = contract
+            .challenge(provider_id, indices)
+            .value(U256::from(bond))
+            .send()
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?
+            .get_receipt()
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?;
+        if !receipt.status() {
+            return Err(HarnessError::Rpc("challenge reverted".into()));
+        }
+        Ok(id)
+    }
+
+    /// Resolve an expired challenge (slashes the provider if unanswered).
+    pub async fn resolve_timeout(&self, challenge_id: u64) -> Result<(), HarnessError> {
+        let receipt = self
+            .instance_contract()
+            .resolveTimeout(challenge_id)
+            .send()
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?
+            .get_receipt()
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?;
+        if !receipt.status() {
+            return Err(HarnessError::Rpc("resolveTimeout reverted".into()));
+        }
+        Ok(())
     }
 }
 

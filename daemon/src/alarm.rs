@@ -33,6 +33,41 @@ impl AlarmSink for LogAlarm {
     }
 }
 
+/// Deduplicating wrapper: an identical message inside the suppression window is
+/// dropped after the first delivery. Retry loops re-raise the same condition every
+/// tick (deliberately — they must never give up), but a pager needs ONE page per
+/// condition, not one per poll; messages that carry changing detail (attempt counts,
+/// new ids) pass through untouched.
+pub struct DedupAlarm<A: AlarmSink> {
+    inner: A,
+    window: std::time::Duration,
+    seen: Mutex<std::collections::HashMap<String, std::time::Instant>>,
+}
+
+impl<A: AlarmSink> DedupAlarm<A> {
+    pub fn new(inner: A, window: std::time::Duration) -> Self {
+        Self { inner, window, seen: Mutex::new(std::collections::HashMap::new()) }
+    }
+}
+
+impl<A: AlarmSink> AlarmSink for DedupAlarm<A> {
+    fn alarm(&self, severity: Severity, message: &str) {
+        let now = std::time::Instant::now();
+        let mut seen = self.seen.lock().unwrap();
+        if let Some(last) = seen.get(message) {
+            if now.duration_since(*last) < self.window {
+                return;
+            }
+        }
+        seen.insert(message.to_string(), now);
+        // Bound the memory: drop entries whose window has lapsed anyway.
+        let window = self.window;
+        seen.retain(|_, last| now.duration_since(*last) < window);
+        drop(seen);
+        self.inner.alarm(severity, message);
+    }
+}
+
 /// Test sink: records every alarm so behavior tests can assert on them.
 #[derive(Default)]
 pub struct CapturingAlarm {

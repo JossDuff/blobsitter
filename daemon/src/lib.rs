@@ -13,10 +13,17 @@
 pub mod abi;
 pub mod alarm;
 pub mod config;
+pub mod custody;
+pub mod enforcement;
 pub mod follower;
 pub mod ingest;
+pub mod persist;
+pub mod proofs;
+pub mod prover;
+pub mod responder;
 pub mod source;
 pub mod store;
+pub mod tx;
 pub mod verify;
 
 /// Re-exported so daemon code and tests spell protocol types one way.

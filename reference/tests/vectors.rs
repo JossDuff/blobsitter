@@ -401,3 +401,42 @@ fn blob_pack_and_versioned_hash() {
     let expected = hash(&fixture["blobVersionedHashes"][0]);
     assert_eq!(blob::versioned_hash(&commitment), expected);
 }
+
+/// The general path builder must agree with the pattern prover on every inclusion
+/// vector, reconstruct the peaks of EVERY mmr_roots case from chunks alone (the
+/// daemon's historical-pin path), and stay correct across the memoization cutoff.
+#[test]
+fn path_builder_conformance() {
+    use blobsitter_reference::{testvec, PathBuilder};
+
+    // Inclusion vectors, via the builder instead of the pattern prover.
+    let v = load("inclusion_proofs.json");
+    let n = 13;
+    let mut builder = PathBuilder::new(testvec::chunk);
+    for case in v["cases"].as_array().unwrap() {
+        let i = case["index"].as_u64().unwrap();
+        let (k, path) = builder.prove(i, n);
+        assert_eq!(k as u64, case["peakIndex"].as_u64().unwrap(), "peak index, i={i}");
+        assert_eq!(path, hashes(&case["path"]), "path, i={i}");
+    }
+
+    // Historical peak reconstruction: every mmr_roots case from one builder.
+    let v = load("mmr_roots.json");
+    for case in v["cases"].as_array().unwrap() {
+        let n = case["leafCount"].as_u64().unwrap();
+        assert_eq!(builder.peaks_at(n), hashes(&case["peaks"]), "peaks_at({n})");
+    }
+
+    // Above the memo cutoff (heights > 10): proofs still verify, and repeated proofs
+    // through the same peak agree with the leaf-by-leaf build.
+    let n = 5000;
+    let state = testvec::build(n);
+    assert_eq!(builder.peaks_at(n), state.peaks(), "peaks_at large n");
+    for i in [0u64, 1, 4095, 4096, 4999] {
+        let (_, path) = builder.prove(i, n);
+        assert!(
+            verify(&testvec::chunk(i), i, &path, n, &state.peaks()),
+            "builder path rejected, i={i}"
+        );
+    }
+}

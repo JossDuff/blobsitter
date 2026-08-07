@@ -46,10 +46,14 @@ and bonded storage providers accountable via challenges and slashing.
 - `cargo test --workspace` — build + run all Rust tests: the golden-vector conformance
   suite (`reference/tests/vectors.rs`) and the daemon behavior suite
   (`daemon/tests/d*.rs`, IDs from `spec/daemon-test-plan.md`). Must pass before any
-  commit. The Layer-2 anvil tests (`daemon/tests/l2_anvil.rs`) self-skip unless anvil
+  commit. The Layer-2 anvil tests (`daemon/tests/l2_*.rs`) self-skip unless anvil
   and `contracts/out` artifacts exist — run `forge build` first to enable them.
 - `./scripts/check_daemon_opacity.sh` — D6: the daemon crate must never depend on an
   app-layer workspace crate (CI-enforced).
+- `PROTOC=<v21+ protoc> cargo check -p blobsitter-daemon --features sp1` — the real
+  SP1 proving backends (network default via `SP1_PROVER=network`, local CPU opt-in).
+  OFF by default and never required for build/test (D15); an escape-hatch-only daemon
+  is fully functional. The operator key always comes from `BLOBSITTER_OPERATOR_KEY`.
 - `python3 scripts/gen_vectors.py` — regenerate `vectors/` (only after a deliberate
   normative-spec change; CI fails if committed vectors don't match the generator).
 - `cargo build -p blobsitter-reference --bin mmr_oracle && (cd contracts && forge test)` —
@@ -89,12 +93,18 @@ and bonded storage providers accountable via challenges and slashing.
   wrappers (standalone workspaces, committed lockfiles — determinism is what the vkeys
   hash); `script/` is host tooling (executor benches, vkey derivation). Proving is
   deferred to the network-spike milestone.
-- `daemon/` — the storage daemon (M1: chain follower at finality, blob source chain,
-  verify-before-write ingest, crash-safe flat-file chunk store). Consumes
-  `blobsitter-reference` for every protocol primitive; never parses record contents.
+- `daemon/` — the storage daemon. M1: chain follower at finality, blob source chain,
+  verify-before-write ingest, crash-safe flat-file chunk store. M2: enforcement —
+  challenge responder with a persistent ledger (`responder.rs`), custody loop with a
+  pure planner (`custody.rs`), prover trait with the SP1 backend behind the `sp1`
+  feature (`prover.rs`), fee-escalating operator tx sender (`tx.rs`), store-backed
+  proof construction incl. historical pins (`proofs.rs`). Consumes
+  `blobsitter-reference` for every protocol primitive; never parses record contents;
+  archive-only mode (no `[provider]` config) runs with no keys and no duties.
 - `testkit/` — the anvil integration harness (Layer 2): real contract artifacts, real
   type-3 blob declarations, mock verifier via `anvil_setCode`, beacon-shaped blob
-  stub. Every later milestone's end-to-end tests build on it.
+  stub, staking/challenger drivers, chain-time warping. Every milestone's end-to-end
+  tests build on it.
 - Planned: `carrier/`, `publisher/` — see the off-chain phase plan below.
 
 ## Off-chain phase plan (adopted 2026-08-06)
@@ -103,14 +113,16 @@ All protocol decisions are closed (wrap mode = PLONK, source data = raw opaque b
 this phase builds the operational tooling. One milestone per PR, `/code-review` each,
 test plans updated in the same commit as any new mechanism. Milestones:
 
-- **M1 — daemon core:** chain follower, blob ingest behind a source trait, flat-file
-  chunk store (chunk i at offset 31·i), root verification against L1, crash/reorg
-  safety, plus the anvil integration harness (real contracts + real blob txs + mock
-  prover) that every later milestone reuses. Test plan: `spec/daemon-test-plan.md`
-  (behaviors D1–D6, D18, Layer 2).
+- **M1 — daemon core** (SHIPPED, PR #8): chain follower, blob ingest behind a source
+  trait, flat-file chunk store (chunk i at offset 31·i), root verification against
+  L1, crash/reorg safety, plus the anvil integration harness (real contracts + real
+  blob txs + mock prover) that every later milestone reuses. Test plan:
+  `spec/daemon-test-plan.md` (behaviors D1–D6, D18, Layer 2).
 - **M2 — daemon enforcement duties:** challenge responder and custody-proof loop
   (prover trait: network default, local opt-in, escape hatch as the prover-free
-  fallback). The slashing-critical milestone — D7–D17, Layers 3–4.
+  fallback). The slashing-critical milestone — D7–D17. Layer-3 fault injection
+  beyond what M2 covers (RPC flaps mid-response, kill-point fuzz on the responder)
+  and the Layer-4 soak run remain follow-ups after M3/M4.
 - **M3 — carrier CLI:** intent intake, blob-tx assembly and submission,
   reimbursement claims.
 - **M4 — publisher CLI:** EIP-712 intent signing, batch planning, appPointer and

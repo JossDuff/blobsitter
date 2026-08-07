@@ -10,10 +10,18 @@ blobsitter-reference = { path = "../reference" }
 # blob → KZG commitment for verify-before-write, with the EMBEDDED mainnet trusted
 # setup — no ceremony is ever run by or for this protocol (CLAUDE.md invariant 9).
 c-kzg = { version = "2", features = ["ethereum_kzg_settings"] }
-alloy = { version = "2", features = ["providers", "contract", "rpc-types", "sol-types"] }
+alloy = { version = "2", features = [
+    "providers",
+    "contract",
+    "rpc-types",
+    "sol-types",
+    "network",
+    "signer-local",
+] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
 reqwest = { version = "0.12", features = ["json"] }
 async-trait = "0.1"
+futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
@@ -24,6 +32,22 @@ tracing = "0.1"
 rustix = { version = "1", features = ["fs"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
+
+[features]
+# The real SP1 proving backends (network via SP1_PROVER=network, local CPU via
+# SP1_PROVER=cpu). Off by default: the SDK is heavy, and neither it nor any
+# credential may be required to build or test the daemon (test plan D15) — without
+# it the custody loop proves every period through the escape hatch.
+sp1 = ["dep:sp1-sdk", "dep:blobsitter-circuits-common"]
+
+[dependencies.sp1-sdk]
+version = "6.3.1"
+features = ["network"]
+optional = true
+
+[dependencies.blobsitter-circuits-common]
+path = "../circuits/common"
+optional = true
 
 [dev-dependencies]
 blobsitter-testkit = { path = "../testkit" }

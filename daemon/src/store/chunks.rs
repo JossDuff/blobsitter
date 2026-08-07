@@ -67,4 +67,11 @@ impl ChunkFile {
         self.file.read_exact_at(&mut chunk, index * CHUNK_BYTES).map_err(|e| self.io(e))?;
         Ok(chunk)
     }
+
+    /// A second, independent handle onto the same file (positioned reads only), for
+    /// readers that outlive a borrow of the store.
+    pub fn try_clone_handle(&self) -> Result<(File, PathBuf), StoreError> {
+        let file = self.file.try_clone().map_err(|e| self.io(e))?;
+        Ok((file, self.path.clone()))
+    }
 }
