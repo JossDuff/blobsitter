@@ -93,6 +93,15 @@ and bonded storage providers accountable via challenges and slashing.
   wrappers (standalone workspaces, committed lockfiles — determinism is what the vkeys
   hash); `script/` is host tooling (executor benches, vkey derivation). Proving is
   deferred to the network-spike milestone.
+- `abi/` — the ONE contract-ABI transcription (instance, paymaster, ERC-1271) every
+  Rust consumer shares: daemon, testkit, carrier, publisher.
+- `intents/` — the signed-intent package: the wire format between publisher and
+  carrier (versioned JSON: intent + signature + blobs + openings + equivalence
+  proof) and its static validation.
+- `carrier/` — the carrier CLI (`blobsitter-carrier`): verify a package, prove the
+  carriage will succeed AND pay (preflight simulation + §15.2 solvency vs the
+  paymaster), assemble the blob tx, submit, report the receipt's reimbursement
+  events; `claim` drains parked payouts. Key via `BLOBSITTER_CARRIER_KEY` only.
 - `daemon/` — the storage daemon. M1: chain follower at finality, blob source chain,
   verify-before-write ingest, crash-safe flat-file chunk store. M2: enforcement —
   challenge responder with a persistent ledger (`responder.rs`), custody loop with a
@@ -105,7 +114,7 @@ and bonded storage providers accountable via challenges and slashing.
   type-3 blob declarations, mock verifier via `anvil_setCode`, beacon-shaped blob
   stub, staking/challenger drivers, chain-time warping. Every milestone's end-to-end
   tests build on it.
-- Planned: `carrier/`, `publisher/` — see the off-chain phase plan below.
+- Planned: `publisher/` — see the off-chain phase plan below.
 
 ## Off-chain phase plan (adopted 2026-08-06)
 
@@ -118,13 +127,14 @@ test plans updated in the same commit as any new mechanism. Milestones:
   L1, crash/reorg safety, plus the anvil integration harness (real contracts + real
   blob txs + mock prover) that every later milestone reuses. Test plan:
   `spec/daemon-test-plan.md` (behaviors D1–D6, D18, Layer 2).
-- **M2 — daemon enforcement duties:** challenge responder and custody-proof loop
-  (prover trait: network default, local opt-in, escape hatch as the prover-free
-  fallback). The slashing-critical milestone — D7–D17. Layer-3 fault injection
-  beyond what M2 covers (RPC flaps mid-response, kill-point fuzz on the responder)
-  and the Layer-4 soak run remain follow-ups after M3/M4.
-- **M3 — carrier CLI:** intent intake, blob-tx assembly and submission,
-  reimbursement claims.
+- **M2 — daemon enforcement duties** (SHIPPED, PR #9): challenge responder and
+  custody-proof loop (prover trait: network default, local opt-in, escape hatch as
+  the prover-free fallback). The slashing-critical milestone — D7–D17. Layer-3 fault
+  injection beyond what M2 covers (RPC flaps mid-response, kill-point fuzz on the
+  responder) and the Layer-4 soak run remain follow-ups after M3/M4.
+- **M3 — carrier CLI:** intent intake (the signed-intent package format in
+  `intents/`), verify-then-carry with solvency simulation, blob-tx assembly and
+  submission, reimbursement claims. Test plan: C1–C7.
 - **M4 — publisher CLI:** EIP-712 intent signing, batch planning, appPointer and
   successor flows. The publisher signs; it never holds ETH or submits.
 - **M5 — container format:** normative spec + golden vectors FIRST (extend
