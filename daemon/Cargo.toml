@@ -7,6 +7,7 @@ description = "Storage daemon: follows L1, ingests declared blobs, maintains the
 
 [dependencies]
 blobsitter-reference = { path = "../reference" }
+blobsitter-abi = { path = "../abi" }
 # blob → KZG commitment for verify-before-write, with the EMBEDDED mainnet trusted
 # setup — no ceremony is ever run by or for this protocol (CLAUDE.md invariant 9).
 c-kzg = { version = "2", features = ["ethereum_kzg_settings"] }

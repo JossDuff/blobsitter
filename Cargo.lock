@@ -2087,6 +2087,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "blobsitter-abi"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+]
+
+[[package]]
+name = "blobsitter-carrier"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "blobsitter-abi",
+ "blobsitter-intents",
+ "blobsitter-reference",
+ "blobsitter-testkit",
+ "c-kzg",
+ "clap",
+ "hex",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "blobsitter-circuits-common"
 version = "0.1.0"
 dependencies = [
@@ -2101,6 +2128,7 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "async-trait",
+ "blobsitter-abi",
  "blobsitter-circuits-common",
  "blobsitter-reference",
  "blobsitter-testkit",
@@ -2121,6 +2149,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "blobsitter-intents"
+version = "0.1.0"
+dependencies = [
+ "blobsitter-reference",
+ "c-kzg",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "blobsitter-reference"
 version = "0.1.0"
 dependencies = [
@@ -2138,6 +2178,7 @@ dependencies = [
  "alloy",
  "axum 0.8.9",
  "blobsitter-daemon",
+ "blobsitter-intents",
  "blobsitter-reference",
  "c-kzg",
  "hex",
