@@ -120,11 +120,18 @@ construction (the off-chain §7.3 form AND the on-chain §7.2 form it must produ
   redelivery idempotence. The store-vs-L1 root check is skipped while the RPC's
   finalized tag is behind already-committed state — a lagging or freshly rotated node
   must not fire the disagreement alarm against a healthy store. A HALTED scan (blob
-  unavailable, gap detected) never starves enforcement: responder and custody drive
-  on every tick regardless — deadlines don't wait for blobs. Log scanning is bounded
-  to the topics the daemon consumes and paged adaptively: a provider-side getLogs cap
+  unavailable, gap detected) never starves enforcement: challenge INTAKE runs on its
+  own scan cursor, so an obligation arriving after the halt point still reaches the
+  ledger, and responder and custody drive on every tick regardless — deadlines don't
+  wait for blobs. Intake is idempotent (a replayed open never clobbers responded
+  state), and dropped enforcement events are detected by cross-checking the chain's
+  open-challenge count against the ledger each tick — a persistent surplus alarms
+  and replays the enforcement scan from deployment. Log scanning is bounded to the
+  topics the daemon consumes and paged adaptively: a provider-side getLogs cap
   halves the page for the retry (successes grow it back), so a busy instance can
-  never wedge the scan on a fixed range.
+  never wedge the scan on a fixed range. Operator transactions are serialized: one
+  fee-escalation episode at a time per account, so concurrent duties can never spend
+  their bumps evicting each other's nonce.
 - **D20 — alarm hygiene and failure backoff:** retry loops re-raise their condition
   every attempt (they must never give up), but identical alarm messages inside a
   suppression window page exactly once; messages carrying changing detail (attempt
