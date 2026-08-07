@@ -1,0 +1,16 @@
+[package]
+name = "blobsitter-intents"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The signed-intent package: the wire format between publisher and carrier, with its static validation"
+
+[dependencies]
+blobsitter-reference = { path = "../reference" }
+# blob → KZG commitment for the identity checks, with the EMBEDDED mainnet trusted
+# setup — no ceremony is ever run by or for this protocol.
+c-kzg = { version = "2", features = ["ethereum_kzg_settings"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+thiserror = "2"
