@@ -68,7 +68,7 @@ async fn c4_carry_declaration_end_to_end() {
 
     assert!(report.solvency.covered);
     let reimbursed = report.reimbursed.expect("paymaster reimbursed");
-    assert!(report.skipped_shortfall.is_none());
+    assert!(report.skipped.is_none());
     let contract = r.harness.instance_contract();
     assert_eq!(contract.leafCount().call().await.unwrap(), 4_097);
     assert_eq!(contract.declarationNonce().call().await.unwrap(), 1);
@@ -167,7 +167,9 @@ async fn c3_insolvency_refusal_force_and_dry_run() {
     let forced = CarryOptions { dry_run: false, force_insolvent: true };
     let report = carry(&r.provider, &package, r.carrier, &forced).await.unwrap();
     assert!(report.reimbursed.is_none());
-    assert!(report.skipped_shortfall.is_some(), "the skip is visible, not silent");
+    let skip = report.skipped.expect("the skip is visible, not silent");
+    assert_eq!(skip.available, 0, "the event carries what the paymaster actually had");
+    assert!(skip.requested > 0);
     assert_eq!(r.harness.instance_contract().leafCount().call().await.unwrap(), 100);
 }
 

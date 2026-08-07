@@ -6,6 +6,7 @@
 use alloy::primitives::Address;
 use alloy::providers::DynProvider;
 
+use alloy::sol_types::SolEvent;
 use blobsitter_abi::{Blobsitter, BlobsitterPaymaster};
 
 #[derive(Debug)]
@@ -47,6 +48,8 @@ pub async fn claim_all(
         .try_into()
         .unwrap_or(u128::MAX);
 
+    // The receipt's Claimed event is the truth about what left each contract: the
+    // pre-read is only the decision to bother (more can park between read and claim).
     let mut claimed = Vec::new();
     if paymaster_claimable > 0 {
         let receipt = paymaster
@@ -60,7 +63,7 @@ pub async fn claim_all(
         if !receipt.status() {
             return Err(ClaimError(format!("paymaster claim reverted: {}", receipt.transaction_hash)));
         }
-        claimed.push(("paymaster", paymaster_address, paymaster_claimable));
+        claimed.push(("paymaster", paymaster_address, claimed_amount(&receipt, carrier)));
     }
     if instance_claimable > 0 {
         let receipt = instance
@@ -74,7 +77,21 @@ pub async fn claim_all(
         if !receipt.status() {
             return Err(ClaimError(format!("instance claim reverted: {}", receipt.transaction_hash)));
         }
-        claimed.push(("instance", instance_address, instance_claimable));
+        claimed.push(("instance", instance_address, claimed_amount(&receipt, carrier)));
     }
     Ok(ClaimReport { claimed, paymaster_claimable, instance_claimable })
+}
+
+fn claimed_amount(
+    receipt: &alloy::rpc::types::TransactionReceipt,
+    carrier: Address,
+) -> u128 {
+    for log in receipt.logs() {
+        if let Ok(e) = blobsitter_abi::BlobsitterPaymaster::Claimed::decode_log(&log.inner) {
+            if e.recipient == carrier {
+                return e.amount.try_into().unwrap_or(u128::MAX);
+            }
+        }
+    }
+    0
 }

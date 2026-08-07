@@ -19,7 +19,9 @@ const BLOB_BYTES: u128 = 131_072;
 
 #[derive(Debug)]
 pub struct SolvencyReport {
-    /// The §-formula amount at current base fees (slight over-approximation).
+    /// Blob fee + execution fee + tip + subsidy, priced ABOVE current base fees:
+    /// both fee terms carry headroom for the worst-case per-block rise between this
+    /// check and inclusion.
     pub expected_reimbursement: u128,
     pub bucket_level: u128,
     pub available_balance: u128,
@@ -75,10 +77,15 @@ pub async fn check(
     // The contract pays (measuredGas + 21_000 + 16·calldata + TAIL) · basefee; our
     // simulation's total estimate already contains the intrinsic and calldata gas,
     // so adding them again on top errs on the generous side — exactly the side a
-    // coverage check should err on.
-    let execution =
-        (gas_estimate as u128 + 21_000 + 16 * calldata_len as u128 + TAIL) * base_fee;
-    let blob_fee = num_blobs as u128 * BLOB_BYTES * blob_base_fee;
+    // coverage check should err on. Both fee terms are then padded 25%: each can
+    // rise up to 12.5% PER BLOCK between this check and inclusion, and a covered=true
+    // that inclusion-time fees falsify means carrying for free (the skip is
+    // all-or-nothing).
+    let headroom = |fee_term: u128| fee_term + fee_term / 4;
+    let execution = headroom(
+        (gas_estimate as u128 + 21_000 + 16 * calldata_len as u128 + TAIL) * base_fee,
+    );
+    let blob_fee = headroom(num_blobs as u128 * BLOB_BYTES * blob_base_fee);
     let expected_reimbursement = blob_fee + execution + tip + subsidy;
 
     let bucket_level: u128 = paymaster

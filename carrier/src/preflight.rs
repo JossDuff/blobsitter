@@ -72,37 +72,57 @@ pub async fn preflight(
     let instance = Address::from(package.instance);
     let contract = Blobsitter::new(instance, provider.clone());
 
-    let now = provider
+    // Every read below is pinned to THIS block: unpinned reads can straddle a new
+    // block and check the package against a chimera of two states (a nonce from one,
+    // peaks from the other), turning a retryable race into a false crypto failure.
+    let latest = provider
         .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
         .await
         .map_err(|e| rpc(e.to_string()))?
-        .ok_or_else(|| rpc("no latest block".into()))?
-        .header
-        .timestamp;
-    // The contract accepts `block.timestamp <= deadline`; the NEXT block's timestamp
-    // will be at least now + 1, so submitting at now == deadline already loses.
-    if now >= package.deadline() {
+        .ok_or_else(|| rpc("no latest block".into()))?;
+    let pin = alloy::eips::BlockId::number(latest.header.number);
+    let now = latest.header.timestamp;
+    // The contract accepts `block.timestamp <= deadline`, but the earliest possible
+    // inclusion is the NEXT slot — one mainnet slot of margin, or the transaction
+    // passes preflight already doomed.
+    const SLOT_SECONDS: u64 = 12;
+    if now + SLOT_SECONDS >= package.deadline() {
         return Err(PreflightError::Expired { deadline: package.deadline(), now });
     }
 
     // The publisher wallet must accept the recomputed digest TODAY — not when the
     // package was built (multisig owners rotate).
     let digest = B256::from(package.signing_digest());
-    let publisher = contract.publisher().call().await.map_err(|e| rpc(e.to_string()))?;
+    let publisher =
+        contract.publisher().block(pin).call().await.map_err(|e| rpc(e.to_string()))?;
     let wallet = IERC1271::new(publisher, provider.clone());
-    let magic = wallet
+    // Only a completed staticcall can REJECT; a transport failure is an RPC error
+    // (a wallet that reverts on bad input is a rejection, though — that arrives as
+    // an error RESPONSE, not a transport failure).
+    let magic = match wallet
         .isValidSignature(digest, Bytes::from(package.signature.clone()))
+        .block(pin)
         .call()
         .await
-        .map_err(|_| PreflightError::SignatureRejected)?;
+    {
+        Ok(magic) => magic,
+        Err(alloy::contract::Error::TransportError(e)) if e.as_error_resp().is_none() => {
+            return Err(rpc(e.to_string()));
+        }
+        Err(_) => return Err(PreflightError::SignatureRejected),
+    };
     if magic.0 != ERC1271_MAGIC {
         return Err(PreflightError::SignatureRejected);
     }
 
     let (calldata, num_blobs, sidecar) = match &package.body {
         IntentBody::Declaration { intent, blobs, openings, equivalence_proof } => {
-            let contract_nonce =
-                contract.declarationNonce().call().await.map_err(|e| rpc(e.to_string()))?;
+            let contract_nonce = contract
+                .declarationNonce()
+                .block(pin)
+                .call()
+                .await
+                .map_err(|e| rpc(e.to_string()))?;
             if intent.nonce != contract_nonce {
                 return Err(PreflightError::NonceMismatch {
                     intent: intent.nonce,
@@ -120,7 +140,8 @@ pub async fn preflight(
 
             // Shape against LIVE state: the declaration must extend the current
             // tree by ≥ 1 chunk with exactly the required blob and subtree counts.
-            let n0 = contract.leafCount().call().await.map_err(|e| rpc(e.to_string()))?;
+            let n0 =
+                contract.leafCount().block(pin).call().await.map_err(|e| rpc(e.to_string()))?;
             let m = intent.new_leaf_count.saturating_sub(n0);
             if m == 0 {
                 return Err(PreflightError::DoesNotExtend {
@@ -157,6 +178,7 @@ pub async fn preflight(
             // and every opening verified against it with the precompile's own math.
             let prior_peaks: Vec<_> = contract
                 .allPeaks()
+                .block(pin)
                 .call()
                 .await
                 .map_err(|e| rpc(e.to_string()))?
@@ -222,8 +244,12 @@ pub async fn preflight(
             (call, blobs.len(), Some(sidecar))
         }
         IntentBody::SetAppPointer { intent } => {
-            let contract_nonce =
-                contract.appPointerNonce().call().await.map_err(|e| rpc(e.to_string()))?;
+            let contract_nonce = contract
+                .appPointerNonce()
+                .block(pin)
+                .call()
+                .await
+                .map_err(|e| rpc(e.to_string()))?;
             if intent.nonce != contract_nonce {
                 return Err(PreflightError::NonceMismatch {
                     intent: intent.nonce,
@@ -240,8 +266,12 @@ pub async fn preflight(
             (call, 0, None)
         }
         IntentBody::SetSuccessor { intent } => {
-            let contract_nonce =
-                contract.successorNonce().call().await.map_err(|e| rpc(e.to_string()))?;
+            let contract_nonce = contract
+                .successorNonce()
+                .block(pin)
+                .call()
+                .await
+                .map_err(|e| rpc(e.to_string()))?;
             if intent.nonce != contract_nonce {
                 return Err(PreflightError::NonceMismatch {
                     intent: intent.nonce,
@@ -266,11 +296,16 @@ pub async fn preflight(
         .with_to(instance)
         .with_input(calldata);
     if let Some(sidecar) = sidecar {
+        // The blob-fee cap tracks the LIVE fee with headroom for a few worst-case
+        // (+12.5%/block) rises — a hardcoded cap strands carriage in fee spikes
+        // after every check has passed.
+        let blob_base_fee =
+            provider.get_blob_base_fee().await.map_err(|e| rpc(e.to_string()))?;
         tx = tx
             .with_blob_sidecar(alloy::eips::eip7594::BlobTransactionSidecarVariant::Eip4844(
                 sidecar,
             ))
-            .with_max_fee_per_blob_gas(10_000_000_000);
+            .with_max_fee_per_blob_gas((blob_base_fee * 2).max(1_000_000_000));
     }
 
     // The simulation IS the equivalence-proof check (the verifier runs inside it) —

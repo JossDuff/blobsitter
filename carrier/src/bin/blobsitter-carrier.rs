@@ -96,11 +96,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "carried: tx {} in block {} (gas used {})",
                 report.tx_hash, report.block_number, report.gas_used
             );
-            match (report.reimbursed, report.skipped_shortfall) {
+            match (report.reimbursed, report.skipped) {
                 (Some(amount), _) => println!("reimbursed: {amount} wei"),
-                (None, Some(short)) => println!(
-                    "REIMBURSEMENT SKIPPED: the paymaster could not cover {short} wei — \
-                     this carriage was not paid"
+                (None, Some(skip)) => println!(
+                    "REIMBURSEMENT SKIPPED: {} wei requested, bucket {} / available {} — \
+                     this carriage was not paid",
+                    skip.requested, skip.bucket_level, skip.available
                 ),
                 (None, None) => println!("no reimbursement event found in the receipt"),
             }
