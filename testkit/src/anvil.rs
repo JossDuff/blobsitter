@@ -290,6 +290,28 @@ impl Harness {
         Ok(id)
     }
 
+    /// Donate `wei` to the instance's paymaster (plain transfer hits `receive()`).
+    pub async fn fund_paymaster(&self, wei: U256) -> Result<Address, HarnessError> {
+        let paymaster = self
+            .instance_contract()
+            .paymaster()
+            .call()
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?;
+        let receipt = self
+            .provider
+            .send_transaction(TransactionRequest::default().with_to(paymaster).with_value(wei))
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?
+            .get_receipt()
+            .await
+            .map_err(|e| HarnessError::Rpc(e.to_string()))?;
+        if !receipt.status() {
+            return Err(HarnessError::Rpc("paymaster donation reverted".into()));
+        }
+        Ok(paymaster)
+    }
+
     /// Resolve an expired challenge (slashes the provider if unanswered).
     pub async fn resolve_timeout(&self, challenge_id: u64) -> Result<(), HarnessError> {
         let receipt = self

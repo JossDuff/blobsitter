@@ -16,6 +16,10 @@ use alloy::sol_types::SolCall;
 
 use blobsitter_reference::{blob, eip712, fs_z, testvec, update_subtree_roots, Chunk, Hash};
 
+use blobsitter_intents::{
+    AppPointerIntent, DeclarationIntent, IntentBody, IntentPackage, Opening, PACKAGE_VERSION,
+};
+
 use crate::anvil::{Harness, HarnessError, Instance};
 use crate::beacon_stub::BeaconStub;
 
@@ -195,4 +199,130 @@ pub async fn declare_pattern(
         versioned_hashes,
         blobs,
     })
+}
+
+/// The PUBLISHER side of carriage, packaged: everything `declare_pattern` computes,
+/// wrapped as a signed-intent package for a carrier instead of being submitted by
+/// the harness itself. `designated_carrier` = zero means anyone may carry.
+pub async fn build_declaration_package(
+    harness: &Harness,
+    m: u64,
+    designated_carrier: alloy::primitives::Address,
+) -> Result<IntentPackage, HarnessError> {
+    let rpc = |e: String| HarnessError::Rpc(e);
+    let contract = harness.instance_contract();
+    let nonce = contract.declarationNonce().call().await.map_err(|e| rpc(e.to_string()))?;
+    let n0 = contract.leafCount().call().await.map_err(|e| rpc(e.to_string()))?;
+    let prior_peaks: Vec<Hash> = contract
+        .allPeaks()
+        .call()
+        .await
+        .map_err(|e| rpc(e.to_string()))?
+        .into_iter()
+        .map(|p| p.0)
+        .collect();
+
+    let chunks: Vec<Chunk> = (n0..n0 + m).map(testvec::chunk).collect();
+    let blobs = blob::pack(&chunks);
+    let new_subtree_peaks = update_subtree_roots(n0, &chunks);
+
+    let settings = c_kzg::ethereum_kzg_settings(0);
+    let mut versioned_hashes = Vec::with_capacity(blobs.len());
+    let mut commitments = Vec::with_capacity(blobs.len());
+    for raw in &blobs {
+        let kzg_blob = c_kzg::Blob::from_bytes(raw).map_err(|e| rpc(e.to_string()))?;
+        let commitment =
+            settings.blob_to_kzg_commitment(&kzg_blob).map_err(|e| rpc(e.to_string()))?;
+        versioned_hashes.push(blob::versioned_hash(&commitment.to_bytes().into_inner()));
+        commitments.push(commitment.to_bytes().into_inner());
+    }
+
+    let instance20: [u8; 20] = harness.instance.into_array();
+    let z = fs_z(&instance20, &versioned_hashes, &prior_peaks, &new_subtree_peaks, n0, n0 + m);
+    let z_point = c_kzg::Bytes32::from_bytes(&z).map_err(|e| rpc(e.to_string()))?;
+    let mut openings = Vec::with_capacity(blobs.len());
+    for (raw, commitment) in blobs.iter().zip(&commitments) {
+        let kzg_blob = c_kzg::Blob::from_bytes(raw).map_err(|e| rpc(e.to_string()))?;
+        let (proof, y) =
+            settings.compute_kzg_proof(&kzg_blob, &z_point).map_err(|e| rpc(e.to_string()))?;
+        openings.push(Opening {
+            y: y.as_slice().try_into().unwrap(),
+            commitment: *commitment,
+            kzg_proof: proof.to_bytes().into_inner(),
+        });
+    }
+
+    let intent = DeclarationIntent {
+        nonce,
+        deadline: harness
+            .provider
+            .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
+            .await
+            .map_err(|e| rpc(e.to_string()))?
+            .map(|b| b.header.timestamp)
+            .unwrap_or_default()
+            + 3_600,
+        blob_versioned_hashes: versioned_hashes,
+        new_subtree_peaks,
+        new_leaf_count: n0 + m,
+        designated_carrier: designated_carrier.into_array(),
+        app_pointer: [0u8; 32],
+    };
+    let mut package = IntentPackage {
+        version: PACKAGE_VERSION,
+        chain_id: harness.chain_id,
+        instance: instance20,
+        body: IntentBody::Declaration {
+            intent,
+            blobs,
+            openings,
+            equivalence_proof: harness.valid_proof.to_vec(),
+        },
+        signature: vec![],
+    };
+    package.signature = sign_package_digest(harness, package.signing_digest())?;
+    Ok(package)
+}
+
+/// A signed setAppPointer package on the current appPointer nonce.
+pub async fn build_app_pointer_package(
+    harness: &Harness,
+    pointer: Hash,
+) -> Result<IntentPackage, HarnessError> {
+    let rpc = |e: String| HarnessError::Rpc(e);
+    let contract = harness.instance_contract();
+    let nonce = contract.appPointerNonce().call().await.map_err(|e| rpc(e.to_string()))?;
+    let deadline = harness
+        .provider
+        .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
+        .await
+        .map_err(|e| rpc(e.to_string()))?
+        .map(|b| b.header.timestamp)
+        .unwrap_or_default()
+        + 3_600;
+    let mut package = IntentPackage {
+        version: PACKAGE_VERSION,
+        chain_id: harness.chain_id,
+        instance: harness.instance.into_array(),
+        body: IntentBody::SetAppPointer {
+            intent: AppPointerIntent { nonce, deadline, pointer },
+        },
+        signature: vec![],
+    };
+    package.signature = sign_package_digest(harness, package.signing_digest())?;
+    Ok(package)
+}
+
+/// ECDSA by the publisher EOA over the recomputed digest, in the 65-byte r‖s‖v form
+/// the ERC-1271 wallet accepts.
+fn sign_package_digest(harness: &Harness, digest: Hash) -> Result<Vec<u8>, HarnessError> {
+    let signature = harness
+        .publisher_key
+        .sign_hash_sync(&B256::from(digest))
+        .map_err(|e| HarnessError::Rpc(e.to_string()))?;
+    let mut bytes = signature.as_bytes();
+    if bytes[64] < 27 {
+        bytes[64] += 27;
+    }
+    Ok(bytes.to_vec())
 }

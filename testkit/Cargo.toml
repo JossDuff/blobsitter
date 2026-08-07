@@ -10,6 +10,7 @@ blobsitter-reference = { path = "../reference" }
 # One contract ABI transcription for all Rust consumers (daemon/src/abi.rs). The
 # reverse edge (daemon -> testkit) is dev-only, so this is not a dependency cycle.
 blobsitter-daemon = { path = "../daemon" }
+blobsitter-intents = { path = "../intents" }
 c-kzg = { version = "2", features = ["ethereum_kzg_settings"] }
 alloy = { version = "2", features = [
     "providers",
