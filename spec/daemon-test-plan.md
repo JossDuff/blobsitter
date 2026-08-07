@@ -1,10 +1,12 @@
-# Storage daemon test plan — named behaviors and required test layers
+# Off-chain test plan — named behaviors and required test layers
 
-Companion to `normative.md` §12–§13 for the off-chain phase. Same discipline as the
-contract test plan: each behavior has a stable ID; Rust tests MUST reference these IDs
-in their names (e.g. `d7_response_differential`) so coverage is auditable against this
-list. A new daemon mechanism means new IDs here in the same commit. Carrier and
-publisher CLIs get their own sections here when their milestones start.
+Companion to `normative.md` §12–§13 and §15 for the off-chain phase. Same discipline
+as the contract test plan: each behavior has a stable ID; Rust tests MUST reference
+these IDs in their names (e.g. `d7_response_differential`, `c1_package_integrity`) so
+coverage is auditable against this list. A new mechanism means new IDs here in the
+same commit. Daemon behaviors are D-numbered; the carrier CLI's are C-numbered (its
+section is at the end); the publisher CLI gets its own section when its milestone
+starts.
 
 The daemon is the provider's agent: it ingests every declared blob, holds the full
 chunk stream, answers challenges, and runs the custody-proof loop. Two of its duties
@@ -177,3 +179,64 @@ byte-identical store. Run in CI nightly rather than per-commit.
   no reimplementations (one MMR, one index derivation, one z preimage).
 - Slashing-critical paths (challenge response, escape hatch) follow the contract
   rule: no SNARK/circuit dependency, ever.
+
+---
+
+# Carrier CLI (M3)
+
+The carrier is any EOA that wraps a publisher's signed intent in a transaction and
+fronts the gas, reimbursed atomically by the paymaster plus a fixed tip. It holds its
+own money and no one else's trust: it cannot alter what the publisher signed, and its
+whole risk is submitting something that reverts or won't be reimbursed. Every carrier
+behavior therefore reduces to one discipline: NOTHING is submitted that local
+verification and simulation have not already shown to succeed AND to pay.
+
+The signed-intent PACKAGE is the wire format between publisher and carrier: a
+versioned, self-contained JSON document holding the intent struct, the publisher
+signature, and (for declarations) the raw blobs, per-blob openings, and the
+equivalence proof. The package is untrusted input.
+
+## Layer 1 — behavior tests
+
+- **C1 — package integrity:** a package is rejected before ANY chain interaction
+  unless it is internally coherent: every blob's recomputed KZG commitment hashes to
+  the signed versioned hash (byte identity, never trusted from the file), blob count
+  equals ⌈m/4096⌉ equals opening count, blobs are canonically packed (zero high
+  bytes, zero tail), and each opening's commitment matches the recomputed one.
+  Corrupt blob, mislabeled hash, count mismatch, and malformed field each name their
+  reason.
+- **C2 — chain preflight:** before spending gas the carrier checks, against live
+  state: intent nonce vs the contract's, deadline vs chain time, designatedCarrier vs
+  its own address, ERC-1271 signature acceptance (staticcall on the real digest),
+  the Fiat–Shamir point recomputed from CURRENT prior peaks with every opening
+  verified against it locally, and a full transaction simulation (gas estimation).
+  A failing preflight names the failing check; nothing is submitted.
+- **C3 — solvency simulation:** the expected reimbursement is computed by the
+  contract's own formula (blob fee + execution fee + tip + subsidy at current base
+  fees) and checked against BOTH the paymaster's token-bucket level and its available
+  balance — reimbursement is all-or-nothing, so a shortfall means carrying for free.
+  Insufficient coverage refuses to submit unless explicitly overridden.
+- **C4 — carriage:** the type-3 transaction is assembled with a sidecar recomputed
+  from the blob BYTES (commitments and blob proofs via c-kzg — never copied from the
+  package), submitted from the carrier EOA, and accepted by the real contract.
+- **C5 — intent kinds:** setAppPointer and setSuccessor packages carry as plain
+  transactions on their own nonce spaces — no blobs, tip-only reimbursement — through
+  the same validate → preflight → submit pipeline.
+- **C6 — reimbursement observation and claims:** after carriage the CLI reports what
+  actually happened — the Reimbursed amount, or the ReimbursementSkipped shortfall —
+  from the receipt's events, never by assumption. A payout whose push failed is
+  visible via the claimable ledger and collectable with the claim command (both
+  paymaster and instance sinks).
+- **C7 — key handling:** the carrier key comes ONLY from the environment
+  (`BLOBSITTER_CARRIER_KEY`); no key material in config, arguments, or output.
+
+## Layer 2 — anvil integration
+
+Through the same testkit rig (real contracts, real blob txs): a package built by the
+harness's publisher side is carried end to end — declared on chain, carrier balance
+grows by at least the tip; a dry run performs every check and submits nothing; a
+corrupt package is refused with zero transactions sent; an unfunded paymaster turns
+into a solvency refusal (and an explicit override carries anyway); a
+designatedCarrier mismatch is refused; the claim flow drains a parked payout. One
+scenario drives the installed BINARY with the key via environment, exactly as
+production.
