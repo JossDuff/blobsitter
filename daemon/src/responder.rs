@@ -71,7 +71,12 @@ impl Ledger {
         self.entries.values()
     }
 
+    /// Idempotent: a REPLAYED open (cursor rescans redeliver events) must not
+    /// clobber an existing entry's responded state.
     pub fn insert(&mut self, challenge: OpenChallenge) -> Result<(), String> {
+        if self.entries.contains_key(&challenge.challenge_id) {
+            return Ok(());
+        }
         self.entries.insert(challenge.challenge_id, challenge);
         self.persist()
     }
@@ -98,6 +103,7 @@ pub struct Responder {
     response_window: u64,
     ledger: Arc<Mutex<Ledger>>,
     sender: Arc<TxSender>,
+    contract: Blobsitter::BlobsitterInstance<alloy::providers::DynProvider>,
     alarm: Arc<dyn AlarmSink>,
     jobs: HashMap<u64, tokio::task::JoinHandle<()>>,
 }
@@ -109,6 +115,7 @@ impl Responder {
         response_window: u64,
         ledger: Ledger,
         sender: Arc<TxSender>,
+        contract: Blobsitter::BlobsitterInstance<alloy::providers::DynProvider>,
         alarm: Arc<dyn AlarmSink>,
     ) -> Self {
         Self {
@@ -117,9 +124,16 @@ impl Responder {
             response_window,
             ledger: Arc::new(Mutex::new(ledger)),
             sender,
+            contract,
             alarm,
             jobs: HashMap::new(),
         }
+    }
+
+    /// Ledger entries still awaiting a confirmed response — the number the chain's
+    /// `openChallenges` counter should match once intake is caught up.
+    pub fn unresponded_count(&self) -> usize {
+        self.ledger.lock().unwrap().entries().filter(|c| c.responded_tx.is_none()).count()
     }
 
     /// A finalized `ChallengeOpened` against this provider. MUST succeed before the
@@ -226,8 +240,18 @@ impl Responder {
         let alarm = self.alarm.clone();
         let ledger = self.ledger.clone();
         let instance = self.instance;
+        let contract = self.contract.clone();
         tokio::spawn(async move {
             let id = entry.challenge_id;
+            // A rescan can resurrect an already-resolved challenge for the moment
+            // between its replayed open and its replayed resolution; answer with a
+            // ledger cleanup instead of a doomed transaction.
+            if let Ok(on_chain) = contract.getChallenge(id).call().await {
+                if on_chain.resolved {
+                    let _ = ledger.lock().unwrap().remove(id);
+                    return;
+                }
+            }
             let indices = entry.indices.clone();
             let n = entry.pinned_leaf_count;
             let pinned_root = entry.pinned_root;

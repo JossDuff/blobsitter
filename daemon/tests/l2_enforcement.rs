@@ -254,6 +254,7 @@ async fn l2_d9_escalation_through_a_stalled_mempool() {
         120,
         ledger,
         r.sender.clone(),
+        r.contract.clone(),
         r.alarm.clone(),
     );
     responder

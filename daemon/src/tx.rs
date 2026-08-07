@@ -21,6 +21,16 @@ use crate::alarm::{AlarmSink, Severity};
 /// isn't landing, the problem is not the fee).
 const MAX_ATTEMPTS: u32 = 10;
 
+/// Would this transaction revert? Prefer the typed JSON-RPC error payload (code 3 is
+/// the standard "execution reverted"); the message substring is only a fallback for
+/// providers that wrap their errors in prose.
+fn is_revert(e: &alloy::transports::RpcError<alloy::transports::TransportErrorKind>) -> bool {
+    if let Some(payload) = e.as_error_resp() {
+        return payload.code == 3 || payload.message.to_lowercase().contains("revert");
+    }
+    e.to_string().to_lowercase().contains("revert")
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SendError {
     #[error("transaction would revert or reverted on chain: {0}")]
@@ -36,6 +46,10 @@ pub struct TxSender {
     operator: Address,
     alarm: Arc<dyn AlarmSink>,
     confirm_timeout: Duration,
+    /// One escalation episode at a time: concurrent duties (a response and a
+    /// custody submission) would otherwise pin the same pending nonce and spend
+    /// their fee bumps evicting each other from the mempool.
+    episode: tokio::sync::Mutex<()>,
 }
 
 impl TxSender {
@@ -47,7 +61,7 @@ impl TxSender {
         alarm: Arc<dyn AlarmSink>,
         confirm_timeout: Duration,
     ) -> Self {
-        Self { provider, operator, alarm, confirm_timeout }
+        Self { provider, operator, alarm, confirm_timeout, episode: tokio::sync::Mutex::new(()) }
     }
 
     pub fn operator(&self) -> Address {
@@ -73,6 +87,9 @@ impl TxSender {
         label: &str,
         chain_deadline: Option<u64>,
     ) -> Result<TxHash, SendError> {
+        // Serialize episodes: the nonce fetched below is only stable while no other
+        // duty is mid-flight on the same account.
+        let _episode = self.episode.lock().await;
         // One nonce for the whole episode: every retry REPLACES the previous
         // attempt instead of queueing behind it.
         let nonce = self
@@ -120,18 +137,17 @@ impl TxSender {
             let pending = match self.provider.send_transaction(tx.clone()).await {
                 Ok(p) => p,
                 Err(e) => {
-                    let msg = e.to_string();
-                    // An earlier attempt may have landed while we were bumping: a
-                    // stale nonce is only an error if none of our hashes confirmed.
-                    if msg.contains("nonce too low") || msg.contains("already known") {
-                        if let Some(hash) = self.any_confirmed(&submitted).await {
-                            return Ok(hash);
-                        }
+                    // FIRST question on any failure: did an earlier attempt land?
+                    // Nodes word their nonce/duplicate errors too differently to
+                    // gate on strings, and a consumed nonce or an
+                    // already-satisfied duty both look like errors here.
+                    if let Some(hash) = self.any_confirmed(&submitted).await {
+                        return Ok(hash);
                     }
-                    if msg.contains("revert") {
-                        return Err(SendError::Reverted(msg));
+                    if is_revert(&e) {
+                        return Err(SendError::Reverted(e.to_string()));
                     }
-                    last_error = msg;
+                    last_error = e.to_string();
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue;
                 }

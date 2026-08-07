@@ -4,8 +4,9 @@
 //! `lapse()` becomes callable.
 //!
 //! The decision logic is a PURE planner over `(chain time, on-chain provider view,
-//! in-flight work)`, so every §13.3-shaped transition is unit-testable with a
-//! simulated clock; the driver around it only executes plans. Custody needs no
+//! in-flight work)`, so every custody-status transition (CURRENT → STALE →
+//! LAPSE_ELIGIBLE → LAPSABLE, and every cure) is unit-testable with a simulated
+//! clock; the driver around it only executes plans. Custody needs no
 //! persistent daemon state at all: the commit lives on chain, so a restarted daemon
 //! reads `getProvider` and resumes exactly where the chain says it is.
 //!
@@ -81,7 +82,8 @@ pub struct CustodyParams {
     pub proving_timeout: Duration,
 }
 
-/// §13.3, derived — never stored, computed fresh from `(now, anchor, lastProven)`.
+/// The derived custody status — never stored, computed fresh from
+/// `(now, anchor, lastProven)` exactly as the contract derives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DerivedStatus {
     Current,
@@ -91,7 +93,9 @@ pub enum DerivedStatus {
 }
 
 pub fn derive_status(now: u64, anchor: u64, last_proven_plus_one: u64, params: &CustodyParams) -> DerivedStatus {
-    let p = (now - anchor) / params.custody_period;
+    // Saturating: a lagging RPC can serve `now` older than a freshly staked
+    // provider's anchor, and that must read as CURRENT, not a wrapped LAPSABLE.
+    let p = now.saturating_sub(anchor) / params.custody_period;
     let q_plus_one = last_proven_plus_one; // q = q_plus_one - 1, possibly -1
     if p <= q_plus_one {
         // p ≤ q + 1
@@ -144,7 +148,7 @@ pub fn plan(
         // Custody obligations end at unbonding (D17); EXITED/SLASHED likewise.
         return Plan::Idle;
     }
-    let p = (now - view.anchor) / params.custody_period;
+    let p = now.saturating_sub(view.anchor) / params.custody_period;
     let period_end = view.anchor + (p + 1) * params.custody_period;
 
     match view.commit {
@@ -171,9 +175,11 @@ pub fn plan(
             Plan::Prove { commit, deadline: period_end }
         }
         // A stale commit (missed period) or none: open the current period's window,
-        // unless it is already proven (q == p) — never re-roll a proven period.
+        // unless it is already proven (q == p) — never re-roll a proven period. A
+        // submission lingering across the period boundary also blocks: overlapping
+        // it with a beginProof would race two episodes on one account.
         _ => {
-            if in_flight.begin || view.last_proven_plus_one > p {
+            if in_flight.begin || in_flight.submitting || view.last_proven_plus_one > p {
                 return Plan::Idle;
             }
             Plan::Begin { deadline: period_end }
@@ -262,16 +268,21 @@ impl CustodyDriver {
             let (period, handle) = self.proving.take().unwrap();
             match handle.await {
                 Ok(Ok(proof)) => {
-                    // Submit only if the commit is still the one we proved (D11:
-                    // never submit a proof for an expired commit).
-                    if view.commit.map(|c| c.period) == Some(period) {
-                        self.spawn_submit_proof(proof, view.commit.unwrap(), period);
+                    // Submit only if the commit is still the one we proved (never
+                    // submit a proof for an expired commit) AND nothing else is
+                    // already submitting — a proof finishing after the escape went
+                    // out must be discarded, not raced against it on one account.
+                    if view.commit.map(|c| c.period) == Some(period) && self.submitting.is_none()
+                    {
+                        let deadline =
+                            view.anchor + (period + 1) * self.params.custody_period;
+                        self.spawn_submit_proof(proof, period, deadline);
                     } else {
                         self.alarm.alarm(
                             Severity::Warning,
                             &format!(
                                 "custody proof for period {period} finished after its \
-                                 commit expired; discarding"
+                                 commit expired or was superseded; discarding"
                             ),
                         );
                     }
@@ -368,14 +379,13 @@ impl CustodyDriver {
         self.proving = Some((commit.period, handle));
     }
 
-    fn spawn_submit_proof(&mut self, proof: Vec<u8>, _commit: Commit, period: u64) {
+    fn spawn_submit_proof(&mut self, proof: Vec<u8>, period: u64, deadline: u64) {
         let sender = self.sender.clone();
         let alarm = self.alarm.clone();
-        // No chain deadline passed here: the reap-side guard already proved the
-        // commit is still current, and a submit that straddles the period boundary
-        // simply reverts (CommitFromEarlierPeriod) and alarms — there is no risk in
-        // letting the sender keep trying.
-        let period_end_deadline = None;
+        // Bounded by the period's end: a submit that would straddle the boundary
+        // reverts on chain anyway (the commit expires with its period), so the
+        // sender must not keep escalating past it.
+        let period_end_deadline = Some(deadline);
         let tx = TransactionRequest::default()
             .with_to(self.params.instance)
             .with_input(Bytes::from(
@@ -407,17 +417,7 @@ impl CustodyDriver {
             } else {
                 let params = params.clone();
                 tokio::task::spawn_blocking(move || {
-                    let indices: Vec<u64> = (0..params.max_sample as u64)
-                        .map(|j| {
-                            custody_index(
-                                &params.instance.into_array(),
-                                &commit.seed,
-                                params.provider_id,
-                                j,
-                                commit.leaf_count,
-                            )
-                        })
-                        .collect();
+                    let indices = sample_indices(&params, &commit, params.max_sample as u64);
                     build_proof_set(&reader, &indices, commit.leaf_count, &commit.root)
                 })
                 .await
@@ -467,6 +467,16 @@ impl CustodyDriver {
     }
 }
 
+/// The contract-derived sample positions for ordinals `[0, count)` against a commit
+/// snapshot — ONE derivation for the circuit witness (k samples) and the escape
+/// hatch (maxSample reveals).
+pub fn sample_indices(params: &CustodyParams, commit: &Commit, count: u64) -> Vec<u64> {
+    let instance20 = params.instance.into_array();
+    (0..count)
+        .map(|j| custody_index(&instance20, &commit.seed, params.provider_id, j, commit.leaf_count))
+        .collect()
+}
+
 /// The full-k circuit witness against the committed snapshot (public: the D12 tests
 /// drive it directly against a mid-growth store).
 pub fn build_witness(
@@ -474,13 +484,10 @@ pub fn build_witness(
     commit: &Commit,
     reader: &Reader,
 ) -> Result<CustodyWitness, crate::proofs::ProofError> {
-    let instance20 = params.instance.into_array();
-    let indices: Vec<u64> = (0..params.custody_k as u64)
-        .map(|j| custody_index(&instance20, &commit.seed, params.provider_id, j, commit.leaf_count))
-        .collect();
+    let indices = sample_indices(params, commit, params.custody_k as u64);
     let set = build_proof_set(reader, &indices, commit.leaf_count, &commit.root)?;
     Ok(CustodyWitness {
-        instance: instance20,
+        instance: params.instance.into_array(),
         provider_id: params.provider_id,
         seed: commit.seed,
         root: commit.root,

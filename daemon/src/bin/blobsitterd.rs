@@ -12,8 +12,8 @@ use alloy::primitives::Address;
 use alloy::providers::{Provider, ProviderBuilder};
 
 use blobsitter_daemon::abi::Blobsitter;
-use blobsitter_daemon::alarm::{AlarmSink, LogAlarm};
-use blobsitter_daemon::config::{Config, ProviderConfig};
+use blobsitter_daemon::alarm::{AlarmSink, DedupAlarm, LogAlarm};
+use blobsitter_daemon::config::{effective_escape_threshold, Config, ProviderConfig};
 use blobsitter_daemon::custody::{CustodyDriver, CustodyParams};
 use blobsitter_daemon::enforcement::Enforcement;
 use blobsitter_daemon::follower::{Follower, FollowerConfig};
@@ -57,7 +57,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sources.push(Box::new(BlobscanSource::new(blobscan.url.clone())));
     }
 
-    let alarm: Arc<dyn AlarmSink> = Arc::new(LogAlarm);
+    // One page per condition per five minutes; changing detail always passes.
+    let alarm: Arc<dyn AlarmSink> =
+        Arc::new(DedupAlarm::new(LogAlarm, Duration::from_secs(300)));
     let ingestor = Ingestor::new(store, SourceChain::new(sources), alarm.clone());
 
     let enforcement = match &config.provider {
@@ -124,14 +126,18 @@ async fn build_enforcement(
 
     let response_window = contract.responseWindow().call().await?;
     let unbonding_delay = contract.unbondingDelay().call().await?;
+    let custody_period = contract.custodyPeriod().call().await?;
     let params = CustodyParams {
         instance,
         provider_id: provider_config.id,
-        custody_period: contract.custodyPeriod().call().await?,
+        custody_period,
         lapse_grace: contract.lapseGrace().call().await?,
         custody_k: contract.custodyK().call().await?,
         max_sample: contract.maxSample().call().await?,
-        escape_threshold: provider_config.escape_threshold_secs,
+        escape_threshold: effective_escape_threshold(
+            provider_config.escape_threshold_secs,
+            custody_period,
+        )?,
         proving_timeout: Duration::from_secs(provider_config.proving_timeout_secs),
     };
 
@@ -148,6 +154,7 @@ async fn build_enforcement(
         response_window,
         ledger,
         sender.clone(),
+        contract.clone(),
         alarm.clone(),
     );
     responder.reconcile(&contract).await?;

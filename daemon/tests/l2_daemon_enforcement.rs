@@ -145,4 +145,45 @@ async fn l2_enforcement_runs_while_ingest_is_halted() {
     // The store never advanced past the halt, and the halt stayed loud.
     assert_eq!(wait_for_nonce(dir.path(), 1).await.leaf_count, 40);
     assert!(daemon_log(dir.path()).contains("unavailable from every configured source"));
+
+    // INTAKE also continues past the halt: a challenge opened now pins the chain's
+    // current state (leafCount 65, beyond the frontier), so it cannot be answered
+    // yet — but it must reach the ledger and be visibly attempted.
+    let id2 = harness.open_challenge(provider_id, vec![50, 60]).await.unwrap();
+    harness.mine(3).await.unwrap();
+    let mut attempted = false;
+    for _ in 0..40 {
+        harness.mine(1).await.unwrap();
+        if daemon_log(dir.path()).contains(&format!("cannot build response for challenge {id2}")) {
+            attempted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert!(
+        attempted,
+        "the post-halt challenge never reached the responder; log:\n{}",
+        daemon_log(dir.path())
+    );
+
+    // The withheld blob finally surfaces: ingest resumes AND the queued response
+    // lands, all without a restart.
+    stub.register(
+        withheld.block_timestamp,
+        withheld.versioned_hashes.iter().copied().zip(withheld.blobs.iter().cloned()).collect(),
+    );
+    let mut resolved = false;
+    for _ in 0..120 {
+        harness.mine(1).await.unwrap();
+        if contract.getChallenge(id2).call().await.unwrap().resolved {
+            resolved = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert!(
+        resolved,
+        "recovery never answered the post-halt challenge; log:\n{}",
+        daemon_log(dir.path())
+    );
 }

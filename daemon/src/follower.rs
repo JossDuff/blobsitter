@@ -47,10 +47,10 @@ pub fn backoff_multiplier(consecutive_failures: u32) -> u32 {
     1u32 << consecutive_failures.min(5)
 }
 
-/// The event topics this daemon consumes — the getLogs filter is bounded to these so
-/// page sizes track relevant traffic, not everything the instance emits.
-const CONSUMED_TOPICS: [alloy::primitives::B256; 7] = [
-    Blobsitter::Declared::SIGNATURE_HASH,
+/// The enforcement-side event topics. Scanned on their OWN cursor, so challenge
+/// intake never waits behind a declaration blocked on an unfetchable blob — a
+/// challenge opened after a halt point must still reach the ledger.
+const ENFORCEMENT_TOPICS: [alloy::primitives::B256; 6] = [
     Blobsitter::ChallengeOpened::SIGNATURE_HASH,
     Blobsitter::ChallengeAnswered::SIGNATURE_HASH,
     Blobsitter::ChallengeRefunded::SIGNATURE_HASH,
@@ -81,7 +81,11 @@ pub struct Follower<P: Provider> {
     cursor_path: PathBuf,
     /// Last block whose declarations are fully ingested; scanning resumes after it.
     cursor: u64,
-    /// Where a full rescan starts (block before deployment); the cursor never goes
+    enf_cursor_path: PathBuf,
+    /// Last block whose ENFORCEMENT events are durably consumed. Independent of the
+    /// ingest cursor: intake of slashing-critical obligations never blocks on blobs.
+    enf_cursor: u64,
+    /// Where a full rescan starts (block before deployment); the cursors never go
     /// below this, and a detected event gap rewinds all the way here.
     scan_floor: u64,
     poll_interval: Duration,
@@ -100,14 +104,20 @@ impl<P: Provider> Follower<P> {
         alarm: Arc<dyn AlarmSink>,
         config: FollowerConfig,
     ) -> Result<Self, FollowerError> {
-        let cursor_path = config.data_dir.join("scan-cursor.json");
-        let cursor = match std::fs::read_to_string(&cursor_path) {
-            Ok(s) => s.trim().parse::<u64>().map_err(|e| FollowerError::Cursor(e.to_string()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                config.deployment_block.saturating_sub(1)
+        let floor = config.deployment_block.saturating_sub(1);
+        let load_cursor = |path: &PathBuf| -> Result<u64, FollowerError> {
+            match std::fs::read_to_string(path) {
+                Ok(s) => {
+                    s.trim().parse::<u64>().map_err(|e| FollowerError::Cursor(e.to_string()))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(floor),
+                Err(e) => Err(FollowerError::Cursor(e.to_string())),
             }
-            Err(e) => return Err(FollowerError::Cursor(e.to_string())),
         };
+        let cursor_path = config.data_dir.join("scan-cursor.json");
+        let cursor = load_cursor(&cursor_path)?;
+        let enf_cursor_path = config.data_dir.join("enforcement-cursor.json");
+        let enf_cursor = load_cursor(&enf_cursor_path)?;
         Ok(Self {
             provider,
             instance: config.instance,
@@ -116,7 +126,9 @@ impl<P: Provider> Follower<P> {
             alarm,
             cursor_path,
             cursor,
-            scan_floor: config.deployment_block.saturating_sub(1),
+            enf_cursor_path,
+            enf_cursor,
+            scan_floor: floor,
             poll_interval: config.poll_interval,
             log_page: config.log_page,
             current_page: config.log_page,
@@ -189,77 +201,121 @@ impl<P: Provider> Follower<P> {
             .header
             .number;
 
+        // Two independent scans: a halted declaration must never delay the intake of
+        // a slashing-critical obligation that arrived after it.
+        let declared = self.scan_declared(finalized).await;
+        let enforcement = self.scan_enforcement(finalized).await;
+        let root = self.check_root(finalized).await;
+        declared.and(enforcement).and(root)
+    }
+
+    /// One adaptive getLogs page: a provider-side cap (too many logs, response too
+    /// large) halves the page for the retry instead of wedging on a fixed range
+    /// forever; successful pages grow back toward the configured maximum.
+    async fn page(
+        &mut self,
+        topics: Vec<alloy::primitives::B256>,
+        from: u64,
+        to: u64,
+    ) -> Result<Vec<Log>, FollowerError> {
+        let filter = Filter::new()
+            .address(self.instance)
+            .event_signature(topics)
+            .from_block(from)
+            .to_block(to);
+        match self.provider.get_logs(&filter).await {
+            Ok(logs) => {
+                self.current_page = (self.current_page * 2).min(self.log_page);
+                Ok(logs)
+            }
+            Err(e) => {
+                self.current_page = (self.current_page / 2).max(1);
+                Err(FollowerError::Rpc(e.to_string()))
+            }
+        }
+    }
+
+    async fn scan_declared(&mut self, finalized: u64) -> Result<(), FollowerError> {
         while self.cursor < finalized {
             let from = self.cursor + 1;
             let to = finalized.min(self.cursor + self.current_page);
-            // Filtered to exactly the topics this daemon consumes — an address-only
-            // query would grow with everyone's traffic — and paged ADAPTIVELY: a
-            // provider-side getLogs cap (too many logs, response too large) halves
-            // the page for the retry instead of wedging on a fixed range forever;
-            // successful pages grow back toward the configured maximum.
-            let filter = Filter::new()
-                .address(self.instance)
-                .event_signature(CONSUMED_TOPICS.to_vec())
-                .from_block(from)
-                .to_block(to);
-            let logs = match self.provider.get_logs(&filter).await {
-                Ok(logs) => {
-                    self.current_page = (self.current_page * 2).min(self.log_page);
-                    logs
-                }
-                Err(e) => {
-                    self.current_page = (self.current_page / 2).max(1);
-                    return Err(rpc(e));
-                }
-            };
+            let logs =
+                self.page(vec![Blobsitter::Declared::SIGNATURE_HASH], from, to).await?;
 
             let mut timestamps: HashMap<u64, u64> = HashMap::new();
             for log in &logs {
-                self.dispatch(log, &mut timestamps).await?;
+                self.dispatch_declared(log, &mut timestamps).await?;
             }
             self.set_cursor(to)?;
         }
-
-        self.check_root(finalized).await
+        Ok(())
     }
 
-    /// Route one finalized log. Failures leave the cursor before the log's block, so
-    /// the event is redelivered until its consumer durably accepts it.
-    async fn dispatch(
+    async fn scan_enforcement(&mut self, finalized: u64) -> Result<(), FollowerError> {
+        let Some(enforcement) = &mut self.enforcement else { return Ok(()) };
+        if enforcement.take_rescan_request() {
+            // The on-chain open-challenge count says we missed an event (a provider
+            // dropped a log): replay everything — redelivery is idempotent.
+            self.set_enf_cursor(self.scan_floor)?;
+        }
+        while self.enf_cursor < finalized {
+            let from = self.enf_cursor + 1;
+            let to = finalized.min(self.enf_cursor + self.current_page);
+            let logs = self.page(ENFORCEMENT_TOPICS.to_vec(), from, to).await?;
+
+            let mut timestamps: HashMap<u64, u64> = HashMap::new();
+            for log in &logs {
+                self.dispatch_enforcement(log, &mut timestamps).await?;
+            }
+            self.set_enf_cursor(to)?;
+        }
+        Ok(())
+    }
+
+    /// Ingest one finalized declaration. Failures leave the cursor before the log's
+    /// block, so the event is redelivered until ingest durably accepts it.
+    async fn dispatch_declared(
+        &mut self,
+        log: &Log,
+        timestamps: &mut HashMap<u64, u64>,
+    ) -> Result<(), FollowerError> {
+        let event = self.declared_event(log, timestamps).await?;
+        match self.ingestor.ingest(&event).await {
+            Ok(_) => Ok(()),
+            Err(IngestError::NonceGap { expected, got }) => {
+                // The missing nonce's log is in a block we already scanned PAST
+                // (a provider dropped it from a getLogs page), so rewinding near
+                // this event can never recover it. Rewind to the floor: the full
+                // rescan is cheap insurance — every already-committed nonce dies
+                // on the redelivery check.
+                self.set_cursor(self.scan_floor)?;
+                Err(FollowerError::Halted {
+                    nonce: expected,
+                    reason: format!(
+                        "nonce {got} observed while {expected} was never seen; \
+                         rescanning from deployment"
+                    ),
+                })
+            }
+            Err(err) => {
+                // Halt AT this declaration: commit the cursor to just before its
+                // block so every later tick re-lands here until the blockage
+                // clears. The alarm already fired inside ingest.
+                self.set_cursor(event.block_number.saturating_sub(1))?;
+                Err(FollowerError::Halted { nonce: event.nonce, reason: err.to_string() })
+            }
+        }
+    }
+
+    /// Route one finalized enforcement log. Failures leave the enforcement cursor
+    /// before the log's block, so the event is redelivered until its consumer
+    /// durably accepts it (intake is idempotent, so replays are harmless).
+    async fn dispatch_enforcement(
         &mut self,
         log: &Log,
         timestamps: &mut HashMap<u64, u64>,
     ) -> Result<(), FollowerError> {
         let Some(&topic0) = log.topic0() else { return Ok(()) };
-
-        if topic0 == Blobsitter::Declared::SIGNATURE_HASH {
-            let event = self.declared_event(log, timestamps).await?;
-            return match self.ingestor.ingest(&event).await {
-                Ok(_) => Ok(()),
-                Err(IngestError::NonceGap { expected, got }) => {
-                    // The missing nonce's log is in a block we already scanned PAST
-                    // (a provider dropped it from a getLogs page), so rewinding near
-                    // this event can never recover it. Rewind to the floor: the full
-                    // rescan is cheap insurance — every already-committed nonce dies
-                    // on the redelivery check.
-                    self.set_cursor(self.scan_floor)?;
-                    Err(FollowerError::Halted {
-                        nonce: expected,
-                        reason: format!(
-                            "nonce {got} observed while {expected} was never seen; \
-                             rescanning from deployment"
-                        ),
-                    })
-                }
-                Err(err) => {
-                    // Halt AT this declaration: commit the cursor to just before its
-                    // block so every later tick re-lands here until the blockage
-                    // clears. The alarm already fired inside ingest.
-                    self.set_cursor(event.block_number.saturating_sub(1))?;
-                    Err(FollowerError::Halted { nonce: event.nonce, reason: err.to_string() })
-                }
-            };
-        }
 
         // Fetched before enforcement is mutably borrowed (only unbonding needs it:
         // the initiating block's timestamp IS the contract's unbondingAt).
@@ -286,7 +342,7 @@ impl<P: Provider> Follower<P> {
                     responded_tx: None,
                 };
                 if let Err(reason) = enforcement.on_challenge_opened(entry) {
-                    self.set_cursor(block.saturating_sub(1))?;
+                    self.set_enf_cursor(block.saturating_sub(1))?;
                     return Err(halt(reason, block));
                 }
             }
@@ -294,21 +350,21 @@ impl<P: Provider> Follower<P> {
             let e = Blobsitter::ChallengeAnswered::decode_log(&log.inner)
                 .map_err(|e| FollowerError::Rpc(e.to_string()))?;
             if let Err(reason) = enforcement.on_challenge_resolved(e.challengeId, false) {
-                self.set_cursor(block.saturating_sub(1))?;
+                self.set_enf_cursor(block.saturating_sub(1))?;
                 return Err(halt(reason, block));
             }
         } else if topic0 == Blobsitter::ChallengeRefunded::SIGNATURE_HASH {
             let e = Blobsitter::ChallengeRefunded::decode_log(&log.inner)
                 .map_err(|e| FollowerError::Rpc(e.to_string()))?;
             if let Err(reason) = enforcement.on_challenge_resolved(e.challengeId, false) {
-                self.set_cursor(block.saturating_sub(1))?;
+                self.set_enf_cursor(block.saturating_sub(1))?;
                 return Err(halt(reason, block));
             }
         } else if topic0 == Blobsitter::ChallengeTimedOut::SIGNATURE_HASH {
             let e = Blobsitter::ChallengeTimedOut::decode_log(&log.inner)
                 .map_err(|e| FollowerError::Rpc(e.to_string()))?;
             if let Err(reason) = enforcement.on_challenge_resolved(e.challengeId, true) {
-                self.set_cursor(block.saturating_sub(1))?;
+                self.set_enf_cursor(block.saturating_sub(1))?;
                 return Err(halt(reason, block));
             }
         } else if topic0 == Blobsitter::Slashed::SIGNATURE_HASH {
@@ -434,6 +490,15 @@ impl<P: Provider> Follower<P> {
         std::fs::write(&self.cursor_path, block.to_string())
             .map_err(|e| FollowerError::Cursor(e.to_string()))?;
         self.cursor = block;
+        Ok(())
+    }
+
+    fn set_enf_cursor(&mut self, block: u64) -> Result<(), FollowerError> {
+        // Same disposable semantics: replayed enforcement events die on the
+        // ledger's idempotence.
+        std::fs::write(&self.enf_cursor_path, block.to_string())
+            .map_err(|e| FollowerError::Cursor(e.to_string()))?;
+        self.enf_cursor = block;
         Ok(())
     }
 }

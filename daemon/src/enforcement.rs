@@ -26,6 +26,9 @@ pub struct Enforcement {
     alarm: std::sync::Arc<dyn AlarmSink>,
     unbonding_delay: u64,
     response_window: u64,
+    /// Ticks in a row the chain's open-challenge count exceeded the ledger's.
+    intake_deficit_streak: u32,
+    rescan_requested: bool,
 }
 
 impl Enforcement {
@@ -46,7 +49,15 @@ impl Enforcement {
             alarm,
             unbonding_delay,
             response_window,
+            intake_deficit_streak: 0,
+            rescan_requested: false,
         }
+    }
+
+    /// True once per requested replay of the enforcement event scan (the follower
+    /// rewinds its enforcement cursor to deployment and clears the request).
+    pub fn take_rescan_request(&mut self) -> bool {
+        std::mem::take(&mut self.rescan_requested)
     }
 
     /// Handle one finalized enforcement event (the follower already decoded and
@@ -106,6 +117,30 @@ impl Enforcement {
             .await
             .map_err(|e| e.to_string())?;
         let view = ProviderView::from(&p);
+
+        // Dropped-event detection: the contract counts challenges without a
+        // confirmed response; so does the ledger (entries not yet responded). A
+        // persistent chain-side surplus means an RPC provider dropped a
+        // ChallengeOpened log from a getLogs page — the index set exists only in
+        // that event, so replay the whole scan. A short streak absorbs the benign
+        // lag between a challenge landing and its event finalizing.
+        let ledger_open = self.responder.unresponded_count() as u32;
+        if p.openChallenges > ledger_open {
+            self.intake_deficit_streak += 1;
+            if self.intake_deficit_streak >= 5 {
+                self.alarm.alarm(
+                    Severity::Critical,
+                    &format!(
+                        "the chain reports {} open challenge(s) but the ledger holds                          {ledger_open}: an event was missed — rescanning from deployment",
+                        p.openChallenges
+                    ),
+                );
+                self.rescan_requested = true;
+                self.intake_deficit_streak = 0;
+            }
+        } else {
+            self.intake_deficit_streak = 0;
+        }
 
         self.custody.drive(now, &view, reader.clone()).await;
         self.responder.drive(now, &reader);

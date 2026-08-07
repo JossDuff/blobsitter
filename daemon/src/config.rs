@@ -52,9 +52,11 @@ pub struct ProviderConfig {
     /// The providerId this daemon answers for.
     pub id: u64,
     /// When the custody period's remaining time drops below this, the loop abandons
-    /// the prover and takes the escape hatch (chunk reveals, SNARK-free).
-    #[serde(default = "default_escape_threshold_secs")]
-    pub escape_threshold_secs: u64,
+    /// the prover and takes the escape hatch (chunk reveals, SNARK-free). Defaults
+    /// to a quarter of the instance's custody period (read from the chain at
+    /// startup); an explicit value must be smaller than the period or the prover
+    /// would silently never run.
+    pub escape_threshold_secs: Option<u64>,
     /// How long one submission attempt waits for confirmation before a fee bump.
     #[serde(default = "default_confirm_timeout_secs")]
     pub confirm_timeout_secs: u64,
@@ -66,6 +68,24 @@ pub struct ProviderConfig {
     /// failure (and triggers the escape fallback).
     #[serde(default = "default_proving_timeout_secs")]
     pub proving_timeout_secs: u64,
+}
+
+/// Resolve the effective escape threshold against the chain-read custody period:
+/// default a quarter of the period (generous margin for the escape transaction even
+/// after a badly stuck proving pipeline), and reject a configured value that would
+/// swallow the whole period — the prover would silently never be used.
+pub fn effective_escape_threshold(
+    configured: Option<u64>,
+    custody_period: u64,
+) -> Result<u64, ConfigError> {
+    let threshold = configured.unwrap_or(custody_period / 4);
+    if threshold >= custody_period {
+        return Err(ConfigError::Invalid(format!(
+            "escape_threshold_secs ({threshold}) must be smaller than the instance's \
+             custody period ({custody_period}); as configured the prover would never run"
+        )));
+    }
+    Ok(threshold)
 }
 
 /// The environment variable holding the operator's hot key (0x-prefixed hex).
@@ -82,12 +102,6 @@ impl ProviderConfig {
             .parse()
             .map_err(|_| ConfigError::Invalid(format!("{OPERATOR_KEY_ENV} is not a valid key")))
     }
-}
-
-fn default_escape_threshold_secs() -> u64 {
-    // A quarter of the production 30-day period: generous margin for the escape
-    // transaction after even a badly stuck proving pipeline.
-    7 * 24 * 3600
 }
 
 fn default_confirm_timeout_secs() -> u64 {

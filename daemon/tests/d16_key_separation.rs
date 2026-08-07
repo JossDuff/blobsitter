@@ -69,6 +69,17 @@ fn d16_operator_key_comes_from_the_environment_only() {
     std::env::remove_var(OPERATOR_KEY_ENV);
 }
 
+/// An escape threshold that swallows the whole custody period would silently
+/// disable the prover — rejected at startup, defaulted to a quarter period.
+#[test]
+fn d16_escape_threshold_must_fit_the_period() {
+    use blobsitter_daemon::config::effective_escape_threshold;
+    assert_eq!(effective_escape_threshold(None, 2_592_000).unwrap(), 648_000);
+    assert_eq!(effective_escape_threshold(Some(60), 300).unwrap(), 60);
+    assert!(effective_escape_threshold(Some(300), 300).is_err());
+    assert!(effective_escape_threshold(Some(7 * 24 * 3600), 24 * 3600).is_err());
+}
+
 /// Archive-only mode: no [provider] section means no duties and no key lookup at all.
 #[test]
 fn d16_archive_only_config_needs_no_key() {

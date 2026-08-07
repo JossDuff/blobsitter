@@ -1,5 +1,5 @@
 //! D11–D15 — the custody loop's decision logic, walked with a simulated clock
-//! through every §13.3-shaped transition. The planner is pure, so these tests cover
+//! through every custody-status transition and cure. The planner is pure, so these tests cover
 //! period discipline (D11), snapshot proving (D12), the escape-hatch routing (D13),
 //! status tracking (D14), and the prover abstraction's failure behavior (D15)
 //! without a chain; the same logic runs against the real contract in the L2 suite.
@@ -85,6 +85,13 @@ fn d11_period_discipline() {
             false
         ),
         Plan::Idle
+    );
+    // A submission lingering across the period boundary blocks the next begin —
+    // two episodes must never race on the operator account.
+    assert_eq!(
+        plan(2_500, &view(0, 0, None), &p, InFlight { submitting: true, ..idle }, true, false),
+        Plan::Idle,
+        "begin waits for the lingering submission"
     );
 }
 
@@ -185,6 +192,15 @@ fn d14_status_walk() {
     assert_eq!(status(7_500, 6), DerivedStatus::Stale);
     assert_eq!(status(8_100, 6), DerivedStatus::LapseEligible);
     assert_eq!(status(8_200, 6), DerivedStatus::Lapsable);
+
+    // A lagging RPC can serve `now` older than a fresh anchor: that reads as
+    // CURRENT (saturating), never a wrapped LAPSABLE or a panic.
+    assert_eq!(derive_status(100, 5_000, 0, &p), DerivedStatus::Current);
+    assert_eq!(
+        plan(100, &view(5_000, 0, None), &p, InFlight::default(), true, false),
+        Plan::Begin { deadline: 6_000 },
+        "pre-anchor time plans within period 0"
+    );
 
     // Unbonding cancels the walk entirely (planner side): no plan while inactive.
     let mut v = view(0, 0, Some(commit_at(2, 10)));

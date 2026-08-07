@@ -51,6 +51,24 @@ fn d10_ledger_survives_restart() {
     assert_eq!(ledger.entries().count(), 1);
 }
 
+/// A REPLAYED open (rescans redeliver events) must not clobber responded state, and
+/// a replay after resolution must not resurrect a duplicate response.
+#[test]
+fn d10_replayed_open_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ledger = Ledger::open(dir.path()).unwrap();
+    ledger.insert(challenge(4)).unwrap();
+    ledger.mark_responded(4, "0xbeef".into()).unwrap();
+
+    // The redelivered ChallengeOpened arrives with responded_tx: None.
+    ledger.insert(challenge(4)).unwrap();
+    assert_eq!(
+        ledger.entries().next().unwrap().responded_tx.as_deref(),
+        Some("0xbeef"),
+        "replay must not reset the responded marker"
+    );
+}
+
 #[test]
 fn d10_corrupt_ledger_refuses_to_open() {
     let dir = tempfile::tempdir().unwrap();
@@ -75,7 +93,14 @@ async fn d10_responder_intake_is_durable_and_loud() {
         std::time::Duration::from_secs(1),
     ));
     let ledger = Ledger::open(dir.path()).unwrap();
-    let mut responder = Responder::new(1, alloy::primitives::Address::ZERO, 60, ledger, sender, alarm.clone());
+    let contract = blobsitter_daemon::abi::Blobsitter::new(
+        alloy::primitives::Address::ZERO,
+        alloy::providers::ProviderBuilder::new()
+            .connect_http("http://127.0.0.1:1".parse().unwrap())
+            .erased(),
+    );
+    let mut responder =
+        Responder::new(1, alloy::primitives::Address::ZERO, 60, ledger, sender, contract, alarm.clone());
 
     responder.on_opened(challenge(7)).unwrap();
     assert!(
