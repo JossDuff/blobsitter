@@ -1,0 +1,9 @@
+[package]
+name = "blobsitter-abi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The one contract-ABI transcription every Rust consumer shares (daemon, testkit, carrier, publisher)"
+
+[dependencies]
+alloy = { version = "2", features = ["contract", "rpc-types", "sol-types"] }

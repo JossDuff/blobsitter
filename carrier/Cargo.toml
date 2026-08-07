@@ -1,0 +1,33 @@
+[package]
+name = "blobsitter-carrier"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The carrier CLI: verify a signed-intent package, prove it will pay, carry it as a blob transaction"
+
+[dependencies]
+blobsitter-reference = { path = "../reference" }
+blobsitter-abi = { path = "../abi" }
+blobsitter-intents = { path = "../intents" }
+c-kzg = { version = "2", features = ["ethereum_kzg_settings"] }
+alloy = { version = "2", features = [
+    "providers",
+    "contract",
+    "rpc-types",
+    "sol-types",
+    "network",
+    "signer-local",
+    "consensus",
+    "eips",
+] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+clap = { version = "4", features = ["derive", "env"] }
+hex = "0.4"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+blobsitter-testkit = { path = "../testkit" }
+tempfile = "3"
+serde_json = "1"
